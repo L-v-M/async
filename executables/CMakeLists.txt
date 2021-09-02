@@ -1,0 +1,9 @@
+add_executable(load_data load_data.cc)
+add_executable(tpch_q1 tpch_q1.cc)
+add_executable(bandwidth_benchmark bandwidth_benchmark.cc)
+
+find_package(Threads REQUIRED)
+
+target_link_libraries(load_data Threads::Threads storage)
+target_link_libraries(tpch_q1 Threads::Threads storage)
+target_link_libraries(bandwidth_benchmark storage)

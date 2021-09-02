@@ -1,0 +1,4 @@
+.vscode
+build
+data
+compile_commands.json

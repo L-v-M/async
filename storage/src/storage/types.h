@@ -1,0 +1,200 @@
+#ifndef STORAGE_TYPES_H_
+#define STORAGE_TYPES_H_
+
+#include <cstdint>
+#include <ostream>
+
+namespace storage {
+
+template <typename T>
+struct ParseResult {
+  T value;
+  const char* end_it;
+};
+
+using Char = char;
+
+class Date {
+ public:
+  Date() noexcept = default;
+
+  explicit Date(std::uint32_t raw) noexcept : raw_(raw) {}
+
+  static ParseResult<Date> FromString(const char* iter,
+                                      char delimiter) noexcept;
+
+  bool operator<=(Date d) const noexcept { return raw_ <= d.raw_; }
+
+ private:
+  std::uint32_t raw_;
+};
+
+template <unsigned kLen, unsigned kPrecision>
+class Numeric {
+ public:
+  Numeric() noexcept = default;
+
+  explicit Numeric(std::int64_t raw) noexcept : raw_(raw) {}
+
+  static ParseResult<Numeric> FromString(const char* iter,
+                                         char delimiter) noexcept {
+    // Check for a sign
+    bool negated = false;
+    if ((*iter) == '-') {
+      negated = true;
+      ++iter;
+    } else if ((*iter) == '+') {
+      ++iter;
+    }
+
+    std::int64_t result = 0;
+    bool fraction = false;
+    std::uint32_t digits_seen_fraction = 0;
+    for (; *iter != delimiter; ++iter) {
+      char c = *iter;
+      if (c == '.') {
+        fraction = true;
+      } else {
+        result = (result * 10) + (c - '0');
+        if (fraction) {
+          ++digits_seen_fraction;
+        }
+      }
+    }
+
+    static_assert(kPrecision <= 2,
+                  "Higher precision not supported for parsing");
+    constexpr std::int64_t shifts[] = {100ll, 10ll, 1ll};
+    result *= shifts[digits_seen_fraction];
+
+    if (negated) {
+      return {Numeric<kLen, kPrecision>{-result}, iter};
+    } else {
+      return {Numeric<kLen, kPrecision>{result}, iter};
+    }
+  }
+
+  Numeric& operator+=(Numeric<kLen, kPrecision> n) noexcept {
+    raw_ += n.raw_;
+    return *this;
+  }
+
+  Numeric operator+(Numeric<kLen, kPrecision> n) const noexcept {
+    Numeric r;
+    r.raw_ = raw_ + n.raw_;
+    return r;
+  }
+
+  Numeric operator-(Numeric<kLen, kPrecision> n) const noexcept {
+    Numeric r;
+    r.raw_ = raw_ - n.raw_;
+    return r;
+  }
+
+  Numeric operator/(std::uint32_t n) const noexcept {
+    Numeric r;
+    r.raw_ = raw_ / n;
+    return r;
+  }
+
+  Numeric<kLen, kPrecision + kPrecision> operator*(
+      Numeric<kLen, kPrecision> n) const noexcept {
+    Numeric<kLen, kPrecision + kPrecision> r;
+    r.raw_ = raw_ * n.raw_;
+    return r;
+  }
+
+  Numeric<kLen, kPrecision - 2> CastM2() const noexcept {
+    Numeric<kLen, kPrecision - 2> r;
+    r.raw_ = raw_ / 100;
+    return r;
+  }
+
+  std::int64_t GetRaw() const noexcept { return raw_; }
+
+ private:
+  template <unsigned l, unsigned p>
+  friend class Numeric;
+
+  std::int64_t raw_;
+};
+
+struct Integer {
+  std::int32_t value;
+};
+
+template <unsigned kSize>
+struct LengthSwitch {};
+
+template <>
+struct LengthSwitch<1> {
+  using Type = std::uint8_t;
+};
+
+template <>
+struct LengthSwitch<2> {
+  using Type = std::uint16_t;
+};
+
+template <>
+struct LengthSwitch<4> {
+  using Type = std::uint32_t;
+};
+
+template <unsigned kMaxLen>
+struct LengthIndicator {
+  using Type = typename LengthSwitch<((kMaxLen < 256)     ? 1
+                                      : (kMaxLen < 65536) ? 2
+                                                          : 4)>::Type;
+};
+
+/// A variable length string
+template <unsigned kMaxLen>
+struct Varchar {
+  typename LengthIndicator<kMaxLen>::Type len;
+  char value[kMaxLen];
+};
+
+/// A fixed length string
+template <unsigned kMaxLen>
+struct FixedChar {
+  typename LengthIndicator<kMaxLen>::Type len;
+  char value[kMaxLen];
+};
+
+}  // namespace storage
+
+template <unsigned kLen, unsigned kPrecision>
+std::ostream& operator<<(std::ostream& out,
+                         storage::Numeric<kLen, kPrecision> n) {
+  std::int64_t raw = n.GetRaw();
+  if (raw < 0) {
+    out << '-';
+    raw = -raw;
+  }
+  if (kPrecision == 0) {
+    out << raw;
+  } else {
+    int64_t sep = 10;
+    for (unsigned index = 1; index < kPrecision; ++index) {
+      sep *= 10;
+    }
+    out << (raw / sep);
+    out << '.';
+    raw = raw % sep;
+    if (!raw) {
+      for (unsigned index = 0; index < kPrecision; ++index) {
+        out << '0';
+      }
+    } else {
+      while (sep > (10 * raw)) {
+        out << '0';
+        sep /= 10;
+      }
+      out << raw;
+    }
+  }
+  return out;
+}
+
+#endif  // STORAGE_TYPES_H_
