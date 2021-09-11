@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <iostream>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -46,6 +47,17 @@ const char *FindPatternFast(const char *iter, const char *end) {
   return iter;
 }
 
+// Returns the position of the pattern character within [iter, end), or end if
+// not found
+template <char kPattern>
+const char *FindPatternSlow(const char *iter, const char *end) {
+  while ((iter < end) && ((*iter) != kPattern)) {
+    ++iter;
+  }
+
+  return iter;
+}
+
 // Returns the position of the n-th occurence of the pattern character within
 // [iter, end), or end if not found
 template <char kPattern>
@@ -60,7 +72,7 @@ static const char *FindNthPatternFast(const char *iter, const char *end,
     auto matches =
         _mm256_movemask_epi8(_mm256_cmpeq_epi8(block, expanded_pattern));
     if (matches) {
-      unsigned num_hits = __builtin_popcountll(matches);
+      unsigned num_hits = __builtin_popcount(matches);
       if (num_hits >= n) {
         for (; n > 1; n--) {
           matches &= (matches - 1);
@@ -81,9 +93,17 @@ static const char *FindNthPatternFast(const char *iter, const char *end,
   return end;
 }
 
+template <typename Page>
 static const char *InsertLine(const char *begin, const char *end,
-                              std::uint64_t index, Page &page) {
-  auto iter = FindNthPatternFast<'|'>(begin, end, 4) + 1;
+                              std::uint64_t index, Page &page);
+
+template <>
+const char *InsertLine<LineitemPage>(const char *begin, const char *end,
+                                     std::uint64_t index, LineitemPage &page) {
+  auto iter = FindPatternSlow<'|'>(begin, end) + 1;
+  auto parsed_partkey = storage::Integer::FromString(iter, '|');
+  page.l_partkey[index] = parsed_partkey.value;
+  iter = FindNthPatternFast<'|'>(parsed_partkey.end_it + 1, end, 2) + 1;
   auto parsed_quantity = storage::Numeric<12, 2>::FromString(iter, '|');
   page.l_quantity[index] = parsed_quantity.value;
   auto parsed_extendedprice =
@@ -104,6 +124,19 @@ static const char *InsertLine(const char *begin, const char *end,
   return FindPatternFast<'\n'>(iter, end);
 }
 
+template <>
+const char *InsertLine<PartPage>(const char *begin, const char *end,
+                                 std::uint64_t index, PartPage &page) {
+  auto parsed_partkey = storage::Integer::FromString(begin, '|');
+  page.p_partkey[index] = parsed_partkey.value;
+  auto type_begin =
+      FindNthPatternFast<'|'>(parsed_partkey.end_it + 1, end, 3) + 1;
+  auto type_end = FindPatternFast<'|'>(type_begin, end);
+  new (&page.p_type[index]) Varchar<25>{type_begin, type_end};
+  return FindPatternFast<'\n'>(type_end + 1, end);
+}
+
+template <typename Page>
 static void LoadChunk(const char *begin, const char *end,
                       storage::File &data_file) {
   std::vector<Page> data(kWriteNumPages);
@@ -113,7 +146,7 @@ static void LoadChunk(const char *begin, const char *end,
       auto &page = data[i];
       std::uint64_t tuple_index = 0;
       for (; tuple_index != Page::kMaxNumTuples && begin < end; ++tuple_index) {
-        begin = InsertLine(begin, end, tuple_index, page) + 1;
+        begin = InsertLine<Page>(begin, end, tuple_index, page) + 1;
       }
       page.num_tuples = tuple_index;
       if (begin >= end) {
@@ -147,9 +180,10 @@ static const char *FindBeginBoundary(const char *begin, const char *end,
   return FindPatternFast<'\n'>(approx_chunk_begin, end) + 1;
 }
 
-static void LoadFile(const std::string &path_to_lineitem_in,
-                     const std::string &path_to_lineitem_out) {
-  int fd = open(path_to_lineitem_in.c_str(), O_RDONLY);
+template <typename Page>
+static void LoadFile(const char *path_to_data_in,
+                     const char *path_to_data_out) {
+  int fd = open(path_to_data_in, O_RDONLY);
   auto length = lseek(fd, 0, SEEK_END);
 
   void *data = mmap(nullptr, length, PROT_READ, MAP_SHARED, fd, 0);
@@ -159,8 +193,7 @@ static void LoadFile(const std::string &path_to_lineitem_in,
   auto begin = static_cast<const char *>(data);
   auto end = begin + length;
 
-  storage::File output_file{path_to_lineitem_out.c_str(),
-                            storage::File::kWrite};
+  storage::File output_file{path_to_data_out, storage::File::kWrite};
 
   auto thread_count = std::thread::hardware_concurrency();
   std::vector<std::thread> threads;
@@ -173,7 +206,7 @@ static void LoadFile(const std::string &path_to_lineitem_in,
       // Executed on a background thread
       auto from = FindBeginBoundary(begin, end, thread_count, index);
       auto to = FindBeginBoundary(begin, end, thread_count, index + 1);
-      LoadChunk(from, to, output_file);
+      LoadChunk<Page>(from, to, output_file);
     });
   }
 
@@ -192,16 +225,27 @@ static void LoadFile(const std::string &path_to_lineitem_in,
   munmap(data, length);
   close(fd);
 }
+
+static void PrintUsage(const char *command) {
+  std::cerr
+      << "Usage: " << command
+      << " lineitem|part (lineitem.tbl lineitem.dat)|(part.tbl part.dat)\n";
+}
 }  // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc != 3) {
-    std::cerr << "Usage: " << argv[0] << " lineitem.tbl lineitem.dat\n";
+  if (argc != 4) {
+    PrintUsage(argv[0]);
     return 1;
   }
 
-  std::string path_to_lineitem_in{argv[1]};
-  std::string path_to_lineitem_out{argv[2]};
-
-  LoadFile(path_to_lineitem_in, path_to_lineitem_out);
+  std::string_view kind{argv[1]};
+  if (kind == "lineitem") {
+    LoadFile<LineitemPage>(argv[2], argv[3]);
+  } else if (kind == "part") {
+    LoadFile<PartPage>(argv[2], argv[3]);
+  } else {
+    PrintUsage(argv[0]);
+    return 1;
+  }
 }

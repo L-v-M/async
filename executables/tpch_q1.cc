@@ -25,25 +25,6 @@ using namespace storage;
 constexpr bool kDoWork = true;
 constexpr unsigned kFetchIncrement = 4u;
 
-class Countdown {
- public:
-  explicit Countdown(std::uint64_t counter) noexcept : counter_(counter) {}
-
-  void Decrement() noexcept { --counter_; }
-
-  bool IsZero() const noexcept { return counter_ == 0; }
-
- private:
-  std::atomic<std::uint64_t> counter_;
-};
-
-cppcoro::task<void> DrainRing(IOUring &ring, const Countdown &countdown) {
-  while (!countdown.IsZero()) {
-    ring.ProcessBatch();
-  }
-  co_return;
-}
-
 class Cache {
  public:
   Cache(std::span<Swip> swips, File &data_file)
@@ -78,7 +59,7 @@ class Cache {
       Countdown &countdown, std::span<const std::uint64_t> swip_indexes) {
     for (std::uint64_t i = begin; i != end; ++i) {
       frames_.emplace_back();
-      Page &page = frames_.back();
+      LineitemPage &page = frames_.back();
       co_await data_file_.AsyncReadPage(ring,
                                         swips_[swip_indexes[i]].GetPageIndex(),
                                         reinterpret_cast<std::byte *>(&page));
@@ -89,7 +70,7 @@ class Cache {
 
   std::span<Swip> swips_;
   File &data_file_;
-  std::vector<Page> frames_;
+  std::vector<LineitemPage> frames_;
 };
 
 struct HashTableEntry {
@@ -129,7 +110,7 @@ class QueryRunner {
     }
   }
 
-  static void ProcessData(Page *data, HashTable &hash_table,
+  static void ProcessData(LineitemPage *data, HashTable &hash_table,
                           ValidHashTableIndexes &valid_hash_table_indexes,
                           Date high_date) {
     Numeric<12, 2> one{std::int64_t{100}};  // assigns a raw value
@@ -158,17 +139,17 @@ class QueryRunner {
     }
   }
 
-  static void ProcessPage(Page &page, Swip swip, HashTable &hash_table,
+  static void ProcessPage(LineitemPage &page, Swip swip, HashTable &hash_table,
                           ValidHashTableIndexes &valid_hash_table_indexes,
                           Date high_date, File &data_file) {
-    Page *data;
+    LineitemPage *data;
 
     if (swip.IsPageIndex()) {
       data_file.ReadPage(swip.GetPageIndex(),
                          reinterpret_cast<std::byte *>(&page));
       data = &page;
     } else {
-      data = swip.GetPointer<Page>();
+      data = swip.GetPointer<LineitemPage>();
     }
     if constexpr (kDoWork) {
       ProcessData(data, hash_table, valid_hash_table_indexes, high_date);
@@ -176,17 +157,17 @@ class QueryRunner {
   }
 
   static cppcoro::task<void> AsyncProcessPage(
-      Page &page, Swip swip, HashTable &hash_table,
+      LineitemPage &page, Swip swip, HashTable &hash_table,
       ValidHashTableIndexes &valid_hash_table_indexes, Date high_date,
       File &data_file, IOUring &ring, Countdown &countdown) {
-    Page *data;
+    LineitemPage *data;
 
     if (swip.IsPageIndex()) {
       co_await data_file.AsyncReadPage(ring, swip.GetPageIndex(),
                                        reinterpret_cast<std::byte *>(&page));
       data = &page;
     } else {
-      data = swip.GetPointer<Page>();
+      data = swip.GetPointer<LineitemPage>();
     }
     if constexpr (kDoWork) {
       ProcessData(data, hash_table, valid_hash_table_indexes, high_date);
@@ -213,7 +194,8 @@ class QueryRunner {
            &ring = thread_local_rings_[thread_index],
            num_ring_entries = num_ring_entries_] {
             std::vector<cppcoro::task<void>> tasks;
-            std::vector<Page> pages(is_synchronous ? 1 : num_ring_entries);
+            std::vector<LineitemPage> pages(is_synchronous ? 1
+                                                           : num_ring_entries);
 
             while (true) {
               auto fetch_increment =

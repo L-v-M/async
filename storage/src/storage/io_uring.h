@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "cppcoro/coroutine.hpp"
+#include "cppcoro/task.hpp"
 #include "liburing.h"
 
 namespace storage {
@@ -104,6 +105,26 @@ inline void IOUringAwaiter::await_suspend(cppcoro::coroutine_handle<> handle) {
   io_uring_sqe_set_data(sqe, this);
   io_uring_submit(&ring_.ring_);
   ++ring_.num_waiting_;
+}
+
+class Countdown {
+ public:
+  explicit Countdown(std::uint64_t counter) noexcept : counter_(counter) {}
+
+  void Decrement() noexcept { --counter_; }
+
+  bool IsZero() const noexcept { return counter_ == 0; }
+
+ private:
+  std::uint64_t counter_;
+};
+
+inline cppcoro::task<void> DrainRing(IOUring &ring,
+                                     const Countdown &countdown) {
+  while (!countdown.IsZero()) {
+    ring.ProcessBatch();
+  }
+  co_return;
 }
 
 }  // namespace storage

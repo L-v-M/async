@@ -24,6 +24,30 @@ static std::uint32_t MergeJulianDay(std::uint32_t year, std::uint32_t month,
          (y / 400) - 32045;
 }
 
+// Algorithm from the Calendar FAQ
+static void SplitJulianDay(unsigned jd, unsigned& year, unsigned& month,
+                           unsigned& day) {
+  unsigned a = jd + 32044;
+  unsigned b = (4 * a + 3) / 146097;
+  unsigned c = a - ((146097 * b) / 4);
+  unsigned d = (4 * c + 3) / 1461;
+  unsigned e = c - ((1461 * d) / 4);
+  unsigned m = (5 * e + 2) / 153;
+
+  day = e - ((153 * m + 2) / 5) + 1;
+  month = m + 3 - (12 * (m / 10));
+  year = (100 * b) + d - 4800 + (m / 10);
+}
+
+std::ostream& operator<<(std::ostream& out, const Date& value) {
+  unsigned year, month, day;
+  SplitJulianDay(value.raw_, year, month, day);
+
+  char buffer[30];
+  snprintf(buffer, sizeof(buffer), "%04u-%02u-%02u", year, month, day);
+  return out << buffer;
+}
+
 ParseResult<Date> Date::FromString(const char* iter, char delimiter) noexcept {
   auto parsed_year = ParseNumber(iter, '-');
   auto parsed_month = ParseNumber(++parsed_year.end_it, '-');
@@ -31,6 +55,23 @@ ParseResult<Date> Date::FromString(const char* iter, char delimiter) noexcept {
   return {Date{MergeJulianDay(parsed_year.value, parsed_month.value,
                               parsed_day.value)},
           parsed_day.end_it};
+}
+
+ParseResult<Integer> Integer::FromString(const char* iter,
+                                         char delimiter) noexcept {
+  // Check for a sign
+  bool is_negative = false;
+  if ((*iter) == '-') {
+    is_negative = true;
+    ++iter;
+  } else if ((*iter) == '+') {
+    ++iter;
+  }
+  auto parsed_number = ParseNumber(iter, delimiter);
+  return ParseResult<Integer>{is_negative
+                                  ? Integer{-std::int32_t(parsed_number.value)}
+                                  : Integer(parsed_number.value),
+                              parsed_number.end_it};
 }
 
 }  // namespace storage

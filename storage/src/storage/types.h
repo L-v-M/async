@@ -2,6 +2,7 @@
 #define STORAGE_TYPES_H_
 
 #include <cstdint>
+#include <cstring>
 #include <ostream>
 
 namespace storage {
@@ -25,14 +26,16 @@ class Date {
 
   bool operator<=(Date d) const noexcept { return raw_ <= d.raw_; }
 
+  friend std::ostream& operator<<(std::ostream& out, const Date& value);
+
  private:
-  std::uint32_t raw_;
+  std::uint32_t raw_{0};
 };
 
 template <unsigned kLen, unsigned kPrecision>
 class Numeric {
  public:
-  Numeric() noexcept = default;
+  Numeric() noexcept : raw_(0){};
 
   explicit Numeric(std::int64_t raw) noexcept : raw_(raw) {}
 
@@ -104,6 +107,13 @@ class Numeric {
     return r;
   }
 
+  template <unsigned l>
+  Numeric<kLen, kPrecision> operator/(Numeric<l, 4> n) const noexcept {
+    Numeric r;
+    r.raw_ = raw_ * 10000 / n.raw_;
+    return r;
+  }
+
   Numeric<kLen, kPrecision - 2> CastM2() const noexcept {
     Numeric<kLen, kPrecision - 2> r;
     r.raw_ = raw_ / 100;
@@ -119,8 +129,31 @@ class Numeric {
   std::int64_t raw_;
 };
 
-struct Integer {
-  std::int32_t value;
+class Integer {
+ public:
+  Integer() noexcept : value_(0) {}
+
+  explicit Integer(std::int32_t value) noexcept : value_(value) {}
+
+  static ParseResult<Integer> FromString(const char* iter,
+                                         char delimiter) noexcept;
+
+  std::uint64_t hash() const {
+    std::uint64_t r = 88172645463325252ull ^ value_;
+    r ^= (r << 13);
+    r ^= (r >> 7);
+    return (r ^ (r << 17));
+  }
+
+  bool operator==(Integer other) const noexcept {
+    return value_ == other.value_;
+  }
+
+  bool operator<(Integer other) const noexcept { return value_ < other.value_; }
+
+  std::int32_t value_;
+
+ private:
 };
 
 template <unsigned kSize>
@@ -150,16 +183,23 @@ struct LengthIndicator {
 
 /// A variable length string
 template <unsigned kMaxLen>
-struct Varchar {
-  typename LengthIndicator<kMaxLen>::Type len;
-  char value[kMaxLen];
-};
+class Varchar {
+ public:
+  Varchar() noexcept = default;
 
-/// A fixed length string
-template <unsigned kMaxLen>
-struct FixedChar {
-  typename LengthIndicator<kMaxLen>::Type len;
-  char value[kMaxLen];
+  Varchar(const char* begin, const char* end) noexcept : size_(end - begin) {
+    std::memcpy(data_, begin, size_);
+  }
+
+  const char* Begin() const noexcept { return data_; }
+
+  typename LengthIndicator<kMaxLen>::Type Size() const noexcept {
+    return size_;
+  }
+
+ private:
+  typename LengthIndicator<kMaxLen>::Type size_;
+  char data_[kMaxLen];
 };
 
 }  // namespace storage
