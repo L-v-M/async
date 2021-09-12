@@ -31,7 +31,6 @@
 namespace {
 using namespace storage;
 
-constexpr bool kDoWork = true;
 constexpr unsigned kFetchIncrement = 8u;
 
 class LineitemHashTable {
@@ -63,7 +62,6 @@ class LineitemHashTable {
     }
     hash_table_.resize(std::bit_ceil(total_size));
     hash_table_mask_ = hash_table_.size() - 1;
-    num_qualifying_tuples_ = total_size;
     std::cout << "Lineitem hash table contains " << total_size << " entries\n";
   }
 
@@ -105,10 +103,6 @@ class LineitemHashTable {
     return 0u;
   }
 
-  std::uint64_t GetNumQualifyingTuples() const noexcept {
-    return num_qualifying_tuples_;
-  }
-
  private:
   struct Entry {
     // partkey(0) is smaller than any partkey actually used
@@ -125,7 +119,6 @@ class LineitemHashTable {
   std::vector<std::vector<Entry>> thread_local_entries_;
   std::vector<Entry> hash_table_;
   std::uint64_t hash_table_mask_;
-  std::uint64_t num_qualifying_tuples_;
 };
 
 class PartHashTable {
@@ -133,8 +126,9 @@ class PartHashTable {
   PartHashTable(unsigned thread_count, unsigned total_num_pages)
       : thread_local_entries_(thread_count),
         page_references_(total_num_pages),
-        thread_local_num_promos_(thread_count, 0),
-        part_pages_buffer_(total_num_pages) {
+        part_pages_buffer_(total_num_pages),
+        num_used_buffer_pages_(0),
+        num_cached_references_(0) {
     swips_.reserve(total_num_pages);
     for (PageIndex i{0}; i != total_num_pages; ++i) {
       swips_.emplace_back(Swip::MakePageIndex(i));
@@ -159,7 +153,6 @@ class PartHashTable {
         }
       }
 
-      page_references_[current_page_index].index = current_page_index;
       page_references_[current_page_index].num_references = num_references;
     }
   }
@@ -171,11 +164,7 @@ class PartHashTable {
     }
     hash_table_.resize(std::bit_ceil(total_size));
     hash_table_mask_ = hash_table_.size() - 1;
-    std::cout << "Part hash table contains " << total_size << " entries\n";
-    std::cout << "Found "
-              << std::accumulate(thread_local_num_promos_.begin(),
-                                 thread_local_num_promos_.end(), 0u)
-              << " rows with promo\n";
+    std::cout << "Part hash table contains " << total_size << " entries\n\n";
   }
 
   void MergeLocalEntries(unsigned thread_index) noexcept {
@@ -205,13 +194,64 @@ class PartHashTable {
     throw "Unable to find partkey";  // this should never happen
   }
 
-  void CacheNext10Percent(File &part_data_file) {
-    for (std::uint64_t i = 0, num_swips = swips_.size(); i != num_swips; ++i) {
-      part_data_file.ReadPage(
-          swips_[i].GetPageIndex(),
-          reinterpret_cast<std::byte *>(&part_pages_buffer_[i]));
-      swips_[i].SetPointer(&part_pages_buffer_[i]);
+  std::uint64_t GetTotalNumPageReferences() const noexcept {
+    std::uint64_t count = 0ull;
+    for (const auto &page_reference : page_references_) {
+      count += page_reference.num_references;
     }
+    return count;
+  }
+
+  void CacheAtLeastNumReferences(File &part_data_file,
+                                 std::uint64_t num_references_to_be_cached) {
+    constexpr std::uint64_t kNumConcurrentTasks = 64ull;
+    IOUring ring(kNumConcurrentTasks);
+    Countdown countdown(kNumConcurrentTasks);
+
+    std::vector<cppcoro::task<void>> tasks;
+    tasks.reserve(kNumConcurrentTasks + 1);
+
+    auto global_begin = num_used_buffer_pages_;
+
+    auto num_swips = swips_.size();
+    for (; num_cached_references_ < num_references_to_be_cached &&
+           num_used_buffer_pages_ != num_swips;
+         ++num_used_buffer_pages_) {
+      const auto &page_reference = page_references_[num_used_buffer_pages_];
+      assert(swips_[num_used_buffer_pages_].GetPageIndex() ==
+             num_used_buffer_pages_);
+      num_cached_references_ += page_reference.num_references;
+    }
+
+    auto global_end = num_used_buffer_pages_;
+
+    auto num_pages = global_end - global_begin;
+    std::uint64_t partition_size =
+        (num_pages + kNumConcurrentTasks - 1) / kNumConcurrentTasks;
+    for (std::uint64_t i = 0; i != kNumConcurrentTasks; ++i) {
+      std::uint64_t begin =
+          std::min(global_begin + i * partition_size, global_end);
+      auto end = std::min(begin + partition_size, global_end);
+      tasks.emplace_back(
+          AsyncLoadPages(ring, begin, end, countdown, part_data_file));
+    }
+    tasks.emplace_back(DrainRing(ring, countdown));
+    cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
+  }
+
+  cppcoro::task<void> AsyncLoadPages(IOUring &ring, std::uint64_t begin,
+                                     std::uint64_t end, Countdown &countdown,
+                                     File &part_data_file) {
+    for (std::uint64_t i = begin; i != end; ++i) {
+      auto *page = reinterpret_cast<std::byte *>(&part_pages_buffer_[i]);
+      co_await part_data_file.AsyncReadPage(ring, i, page);
+      swips_[i].SetPointer(page);
+    }
+    countdown.Decrement();
+  }
+
+  std::uint64_t GetNumAlreadyCachedReferences() const noexcept {
+    return num_cached_references_;
   }
 
  private:
@@ -230,7 +270,6 @@ class PartHashTable {
   };
 
   struct PageReferences {
-    PageIndex index;
     std::uint32_t num_references;
   };
 
@@ -239,8 +278,9 @@ class PartHashTable {
   std::vector<Entry *> hash_table_;
   std::vector<PageReferences> page_references_;
   std::uint64_t hash_table_mask_;
-  std::vector<std::uint32_t> thread_local_num_promos_;
   std::vector<PartPage> part_pages_buffer_;
+  std::uint64_t num_used_buffer_pages_;
+  std::uint64_t num_cached_references_;
 };
 
 PartHashTable BuildHashTableForPart(std::span<LineitemPage> lineitem_pages,
@@ -415,9 +455,6 @@ class QueryRunner {
       second_sum += local_sums.second;
     }
 
-    std::cout << "First sum: " << first_sum << "\nSecond sum: " << second_sum
-              << "\n";
-
     // 100 * first_sum / second_sum
     auto result = Numeric<12, 4>{1'000'000ll} * (first_sum / second_sum);
 
@@ -543,7 +580,14 @@ int main(int argc, char *argv[]) {
 
   File part_data_file{path_to_part, File::kRead, true};
 
-  for (int i = 0; i != 2; ++i) {
+  auto total_num_references = part_hash_table.GetTotalNumPageReferences();
+  auto ten_percent = (total_num_references + 9) / 10;
+
+  for (int i = 0; i != 11; ++i) {
+    std::cout << "\nCached "
+              << part_hash_table.GetNumAlreadyCachedReferences() * 100 /
+                     total_num_references
+              << "%\n";
     {
       QueryRunner synchronousRunner{part_hash_table, part_data_file,
                                     lineitem_pages, 8};
@@ -554,13 +598,12 @@ int main(int argc, char *argv[]) {
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "Synchronous, " << i * 10 << "% cached, " << milliseconds
-                << " ms\n";
+      std::cout << "Synchronous, " << milliseconds << " ms\n";
     }
 
     {
       QueryRunner asynchronousRunner{part_hash_table, part_data_file,
-                                     lineitem_pages, 8, 16};
+                                     lineitem_pages, 8, 4};
       auto start = std::chrono::high_resolution_clock::now();
       asynchronousRunner.StartProcessing();
       asynchronousRunner.DoPostProcessing(true);
@@ -568,10 +611,10 @@ int main(int argc, char *argv[]) {
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "Asynchronous, " << i * 10 << "% cached, " << milliseconds
-                << " ms\n";
+      std::cout << "Asynchronous, " << milliseconds << " ms\n";
     }
 
-    if (i == 0) part_hash_table.CacheNext10Percent(part_data_file);
+    part_hash_table.CacheAtLeastNumReferences(part_data_file,
+                                              (i + 1) * ten_percent);
   }
 }
