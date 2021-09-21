@@ -34,7 +34,11 @@ File::File(const char *filename, Mode mode, bool use_direct_io_for_reading) {
   }
 }
 
-File::~File() { close(fd_); }
+File::~File() {
+  if (close(fd_) == -1) {
+    ThrowErrno();
+  }
+}
 
 std::uint64_t File::ReadSize() const {
   struct stat fileStat;
@@ -45,8 +49,8 @@ std::uint64_t File::ReadSize() const {
 }
 
 void File::ReadBlock(std::byte *data, std::uint64_t offset,
-                     std::uint64_t size) {
-  std::uint64_t total_bytes_read = 0;
+                     std::uint64_t size) const {
+  std::uint64_t total_bytes_read = 0ull;
   while (total_bytes_read < size) {
     ssize_t bytes_read =
         pread(fd_, data + total_bytes_read, size - total_bytes_read,
@@ -65,7 +69,7 @@ void File::ReadBlock(std::byte *data, std::uint64_t offset,
 
 cppcoro::task<void> File::AsyncReadBlock(IOUring &ring, std::byte *data,
                                          std::uint64_t offset,
-                                         std::uint64_t size) {
+                                         std::uint64_t size) const {
   std::uint64_t total_bytes_read = 0;
   while (total_bytes_read < size) {
     ssize_t bytes_read = co_await IOUringAwaiter(

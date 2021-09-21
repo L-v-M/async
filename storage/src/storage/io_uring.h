@@ -37,9 +37,9 @@ class IOUringAwaiter {
   cppcoro::coroutine_handle<> handle_;
   IOUring &ring_;
   void *buffer_;
-  size_t num_bytes_;
-  off_t offset_;
-  int fd_;
+  const size_t num_bytes_;
+  const off_t offset_;
+  const int fd_;
   __s32 result_;
 };
 
@@ -114,6 +114,8 @@ class Countdown {
   void Decrement() noexcept { --counter_; }
 
   bool IsZero() const noexcept { return counter_ == 0; }
+
+  void Set(std::uint64_t counter) noexcept { counter_ = counter; }
 
  private:
   std::uint64_t counter_;

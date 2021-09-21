@@ -151,9 +151,8 @@ class Integer {
 
   bool operator<(Integer other) const noexcept { return value_ < other.value_; }
 
-  std::int32_t value_;
-
  private:
+  std::int32_t value_;
 };
 
 template <unsigned kSize>

@@ -24,6 +24,15 @@ static std::uint32_t MergeJulianDay(std::uint32_t year, std::uint32_t month,
          (y / 400) - 32045;
 }
 
+ParseResult<Date> Date::FromString(const char* iter, char delimiter) noexcept {
+  auto parsed_year = ParseNumber(iter, '-');
+  auto parsed_month = ParseNumber(++parsed_year.end_it, '-');
+  auto parsed_day = ParseNumber(++parsed_month.end_it, delimiter);
+  return {Date{MergeJulianDay(parsed_year.value, parsed_month.value,
+                              parsed_day.value)},
+          parsed_day.end_it};
+}
+
 // Algorithm from the Calendar FAQ
 static void SplitJulianDay(unsigned jd, unsigned& year, unsigned& month,
                            unsigned& day) {
@@ -46,15 +55,6 @@ std::ostream& operator<<(std::ostream& out, const Date& value) {
   char buffer[30];
   snprintf(buffer, sizeof(buffer), "%04u-%02u-%02u", year, month, day);
   return out << buffer;
-}
-
-ParseResult<Date> Date::FromString(const char* iter, char delimiter) noexcept {
-  auto parsed_year = ParseNumber(iter, '-');
-  auto parsed_month = ParseNumber(++parsed_year.end_it, '-');
-  auto parsed_day = ParseNumber(++parsed_month.end_it, delimiter);
-  return {Date{MergeJulianDay(parsed_year.value, parsed_month.value,
-                              parsed_day.value)},
-          parsed_day.end_it};
 }
 
 ParseResult<Integer> Integer::FromString(const char* iter,
