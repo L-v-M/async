@@ -24,7 +24,6 @@
 namespace {
 using namespace storage;
 
-constexpr std::uint64_t kFetchIncrement = 4ull;
 bool do_work = true;
 
 class Cache {
@@ -201,8 +200,20 @@ class QueryRunner {
             std::vector<LineitemPageQ1> pages(
                 is_synchronous ? 1 : num_ring_entries);
 
-            auto fetch_increment =
-                is_synchronous ? kFetchIncrement : num_ring_entries;
+            constexpr std::uint64_t kSyncFetchIncrement =
+                (100'000 + LineitemPageQ1::kMaxNumTuples - 1) /
+                LineitemPageQ1::kMaxNumTuples;
+
+            std::uint64_t fetch_increment;
+
+            if (is_synchronous) {
+              fetch_increment = kSyncFetchIncrement;
+            } else {
+              fetch_increment = ((kSyncFetchIncrement + num_ring_entries - 1) /
+                                 num_ring_entries) *
+                                num_ring_entries;
+            }
+
             while (true) {
               auto begin = current_swip.fetch_add(fetch_increment);
               if (begin >= num_swips) {
@@ -212,21 +223,29 @@ class QueryRunner {
 
               if (is_synchronous) {
                 for (; begin != end; ++begin) {
-                  ProcessPage(pages[0], swips[begin], hash_table,
+                  ProcessPage(pages.front(), swips[begin], hash_table,
                               valid_hash_table_indexes, high_date, data_file);
                 }
               } else {
-                const std::uint64_t num_concurrent_tasks = end - begin;
-                Countdown countdown(num_concurrent_tasks);
-                tasks.reserve(num_concurrent_tasks + 1);
-                for (std::uint32_t i = 0; begin != end; ++i, ++begin) {
+                Countdown countdown(0);
+                for (std::uint32_t i = 0; begin != end; ++begin) {
                   tasks.emplace_back(
-                      AsyncProcessPage(pages[i], swips[begin], hash_table,
+                      AsyncProcessPage(pages[i++], swips[begin], hash_table,
                                        valid_hash_table_indexes, high_date,
                                        data_file, ring, countdown));
+                  if (tasks.size() == num_ring_entries) {
+                    countdown.Set(num_ring_entries);
+                    tasks.emplace_back(DrainRing(ring, countdown));
+                    cppcoro::sync_wait(
+                        cppcoro::when_all_ready(std::move(tasks)));
+                    i = 0;
+                  }
                 }
-                tasks.emplace_back(DrainRing(ring, countdown));
-                cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
+                if (!tasks.empty()) {
+                  countdown.Set(tasks.size());
+                  tasks.emplace_back(DrainRing(ring, countdown));
+                  cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
+                }
               }
             }
           });
@@ -353,7 +372,8 @@ int main(int argc, char *argv[]) {
   auto partition_size =
       (swip_indexes.size() + 9) / 10;  // divide in 10 partitions
 
-  std::cout << "kind_of_io,percent_cached,num_entries_per_ring,do_work,do_"
+  std::cout << "kind_of_io,num_threads,percent_cached,num_entries_per_ring,do_"
+               "work,do_"
                "random_io,time,throughput\n";
 
   for (int i = 0; i != 11; ++i) {
@@ -373,9 +393,9 @@ int main(int argc, char *argv[]) {
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "synchronous," << i * 10 << " %,0," << std::boolalpha
-                << do_work << "," << do_random_io << "," << milliseconds
-                << " ms,"
+      std::cout << "synchronous," << num_threads << "," << i * 10 << " %,0,"
+                << std::boolalpha << do_work << "," << do_random_io << ","
+                << milliseconds << " ms,"
                 << (file_size / 1000000000.0) / (milliseconds / 1000.0)
                 << " Gb/s\n";
     }
@@ -390,9 +410,9 @@ int main(int argc, char *argv[]) {
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "asynchronous," << i * 10 << " %," << num_entries_per_ring
-                << "," << std::boolalpha << do_work << "," << do_random_io
-                << "," << milliseconds << " ms,"
+      std::cout << "asynchronous," << num_threads << "," << i * 10 << " %,"
+                << num_entries_per_ring << "," << std::boolalpha << do_work
+                << "," << do_random_io << "," << milliseconds << " ms,"
                 << (file_size / 1000000000.0) / (milliseconds / 1000.0)
                 << " Gb/s\n";
     }
