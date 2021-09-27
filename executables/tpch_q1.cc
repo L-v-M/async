@@ -141,39 +141,43 @@ class QueryRunner {
     }
   }
 
-  static void ProcessPage(LineitemPageQ1 &page, Swip swip,
-                          HashTable &hash_table,
-                          ValidHashTableIndexes &valid_hash_table_indexes,
-                          Date high_date, const File &data_file) {
-    LineitemPageQ1 *data;
+  static void ProcessPages(LineitemPageQ1 &page, std::span<const Swip> swips,
+                           HashTable &hash_table,
+                           ValidHashTableIndexes &valid_hash_table_indexes,
+                           Date high_date, const File &data_file) {
+    for (auto swip : swips) {
+      LineitemPageQ1 *data;
 
-    if (swip.IsPageIndex()) {
-      data_file.ReadPage(swip.GetPageIndex(),
-                         reinterpret_cast<std::byte *>(&page));
-      data = &page;
-    } else {
-      data = swip.GetPointer<LineitemPageQ1>();
-    }
-    if (do_work) {
-      ProcessTuples(*data, hash_table, valid_hash_table_indexes, high_date);
+      if (swip.IsPageIndex()) {
+        data_file.ReadPage(swip.GetPageIndex(),
+                           reinterpret_cast<std::byte *>(&page));
+        data = &page;
+      } else {
+        data = swip.GetPointer<LineitemPageQ1>();
+      }
+      if (do_work) {
+        ProcessTuples(*data, hash_table, valid_hash_table_indexes, high_date);
+      }
     }
   }
 
-  static cppcoro::task<void> AsyncProcessPage(
-      LineitemPageQ1 &page, Swip swip, HashTable &hash_table,
+  static cppcoro::task<void> AsyncProcessPages(
+      LineitemPageQ1 &page, std::span<const Swip> swips, HashTable &hash_table,
       ValidHashTableIndexes &valid_hash_table_indexes, Date high_date,
       const File &data_file, IOUring &ring, Countdown &countdown) {
-    LineitemPageQ1 *data;
+    for (auto swip : swips) {
+      LineitemPageQ1 *data;
 
-    if (swip.IsPageIndex()) {
-      co_await data_file.AsyncReadPage(ring, swip.GetPageIndex(),
-                                       reinterpret_cast<std::byte *>(&page));
-      data = &page;
-    } else {
-      data = swip.GetPointer<LineitemPageQ1>();
-    }
-    if (do_work) {
-      ProcessTuples(*data, hash_table, valid_hash_table_indexes, high_date);
+      if (swip.IsPageIndex()) {
+        co_await data_file.AsyncReadPage(ring, swip.GetPageIndex(),
+                                         reinterpret_cast<std::byte *>(&page));
+        data = &page;
+      } else {
+        data = swip.GetPointer<LineitemPageQ1>();
+      }
+      if (do_work) {
+        ProcessTuples(*data, hash_table, valid_hash_table_indexes, high_date);
+      }
     }
     countdown.Decrement();
   }
@@ -196,10 +200,10 @@ class QueryRunner {
            is_synchronous = IsSynchronous(),
            &ring = thread_local_rings_[thread_index],
            num_ring_entries = num_ring_entries_] {
-            std::vector<cppcoro::task<void>> tasks;
             std::vector<LineitemPageQ1> pages(
                 is_synchronous ? 1 : num_ring_entries);
 
+            // process ceil(100'000 / kMaxNumTuples) pages per morsel
             constexpr std::uint64_t kSyncFetchIncrement =
                 (100'000 + LineitemPageQ1::kMaxNumTuples - 1) /
                 LineitemPageQ1::kMaxNumTuples;
@@ -220,32 +224,31 @@ class QueryRunner {
                 return;
               }
               auto end = std::min(num_swips, begin + fetch_increment);
+              auto size = end - begin;
 
               if (is_synchronous) {
-                for (; begin != end; ++begin) {
-                  ProcessPage(pages.front(), swips[begin], hash_table,
-                              valid_hash_table_indexes, high_date, data_file);
-                }
+                ProcessPages(pages.front(), swips.subspan(begin, size),
+                             hash_table, valid_hash_table_indexes, high_date,
+                             data_file);
               } else {
-                Countdown countdown(0);
-                for (std::uint32_t i = 0; begin != end; ++begin) {
-                  tasks.emplace_back(
-                      AsyncProcessPage(pages[i++], swips[begin], hash_table,
-                                       valid_hash_table_indexes, high_date,
-                                       data_file, ring, countdown));
-                  if (tasks.size() == num_ring_entries) {
-                    countdown.Set(num_ring_entries);
-                    tasks.emplace_back(DrainRing(ring, countdown));
-                    cppcoro::sync_wait(
-                        cppcoro::when_all_ready(std::move(tasks)));
-                    i = 0;
-                  }
+                auto num_pages_per_task =
+                    (size + num_ring_entries - 1) / num_ring_entries;
+
+                std::vector<cppcoro::task<void>> tasks;
+                Countdown countdown(num_ring_entries);
+                for (std::uint32_t i = 0; i != num_ring_entries; ++i) {
+                  auto local_begin =
+                      std::min(begin + i * num_pages_per_task, end);
+                  auto local_end =
+                      std::min(local_begin + num_pages_per_task, end);
+                  tasks.emplace_back(AsyncProcessPages(
+                      pages[i],
+                      swips.subspan(local_begin, local_end - local_begin),
+                      hash_table, valid_hash_table_indexes, high_date,
+                      data_file, ring, countdown));
                 }
-                if (!tasks.empty()) {
-                  countdown.Set(tasks.size());
-                  tasks.emplace_back(DrainRing(ring, countdown));
-                  cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
-                }
+                tasks.emplace_back(DrainRing(ring, countdown));
+                cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
               }
             }
           });
@@ -294,11 +297,11 @@ class QueryRunner {
                 });
 
       if (should_print_result) {
-        std::cout
+        std::cerr
             << "l_returnflag|l_linestatus|sum_qty|sum_base_price|sum_disc_"
                "price|sum_charge|avg_qty|avg_price|avg_disc|count_order\n";
         for (auto *entry : result_entries) {
-          std::cout << entry->l_returnflag << "|" << entry->l_linestatus << "|"
+          std::cerr << entry->l_returnflag << "|" << entry->l_linestatus << "|"
                     << entry->sum_qty << "|" << entry->sum_base_price << "|"
                     << entry->sum_disc_price << "|" << entry->sum_charge << "|"
                     << entry->sum_qty / entry->count << "|"
@@ -334,10 +337,10 @@ std::vector<Swip> GetSwips(std::uint64_t size_of_data_file) {
 }  // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc != 7) {
+  if (argc != 8) {
     std::cerr << "Usage: " << argv[0]
               << " lineitem.dat num_threads num_entries_per_ring do_work "
-                 "do_random_io print_result\n";
+                 "do_random_io print_result print_header\n";
     return 1;
   }
 
@@ -349,6 +352,8 @@ int main(int argc, char *argv[]) {
   std::istringstream(argv[5]) >> std::boolalpha >> do_random_io;
   bool print_result;
   std::istringstream(argv[6]) >> std::boolalpha >> print_result;
+  bool print_header;
+  std::istringstream(argv[7]) >> std::boolalpha >> print_header;
 
   const File file{path_to_lineitem.c_str(), File::kRead, true};
   auto file_size = file.ReadSize();
@@ -372,9 +377,11 @@ int main(int argc, char *argv[]) {
   auto partition_size =
       (swip_indexes.size() + 9) / 10;  // divide in 10 partitions
 
-  std::cout << "kind_of_io,num_threads,percent_cached,num_entries_per_ring,do_"
-               "work,do_"
-               "random_io,time,throughput\n";
+  if (print_header) {
+    std::cout << "kind_of_io,page_size_power,num_threads,num_cached_pages,num_"
+                 "total_pages,num_entries_"
+                 "per_ring,do_work,do_random_io,time,file_size,throughput\n";
+  }
 
   for (int i = 0; i != 11; ++i) {
     if (i > 0) {
@@ -393,11 +400,12 @@ int main(int argc, char *argv[]) {
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "synchronous," << num_threads << "," << i * 10 << " %,0,"
-                << std::boolalpha << do_work << "," << do_random_io << ","
-                << milliseconds << " ms,"
-                << (file_size / 1000000000.0) / (milliseconds / 1000.0)
-                << " Gb/s\n";
+      std::cout << "synchronous," << kPageSizePower << "," << num_threads << ","
+                << std::min(i * partition_size, swip_indexes.size()) << ","
+                << swip_indexes.size() << ",0," << std::boolalpha << do_work
+                << "," << do_random_io << "," << milliseconds << ","
+                << file_size << ","
+                << (file_size / 1000000000.0) / (milliseconds / 1000.0) << "\n";
     }
 
     {
@@ -410,11 +418,12 @@ int main(int argc, char *argv[]) {
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "asynchronous," << num_threads << "," << i * 10 << " %,"
-                << num_entries_per_ring << "," << std::boolalpha << do_work
-                << "," << do_random_io << "," << milliseconds << " ms,"
-                << (file_size / 1000000000.0) / (milliseconds / 1000.0)
-                << " Gb/s\n";
+      std::cout << "asynchronous," << kPageSizePower << "," << num_threads
+                << "," << std::min(i * partition_size, swip_indexes.size())
+                << "," << swip_indexes.size() << "," << num_entries_per_ring
+                << "," << std::boolalpha << do_work << "," << do_random_io
+                << "," << milliseconds << "," << file_size << ","
+                << (file_size / 1000000000.0) / (milliseconds / 1000.0) << "\n";
     }
   }
 }

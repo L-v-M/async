@@ -30,19 +30,15 @@ struct alignas(kPageSize) LineitemPageQ1 {
 static_assert(sizeof(LineitemPageQ1) == kPageSize);
 
 constexpr std::array<std::uint64_t, 11> kLineitemPageQ14MaxNumTuples = {
-    97, 194, 389, 780, 1560, 3120, 6241, 12482, 24965, 49932, 99864};
+    170, 341, 682, 1365, 2730, 5461, 10922, 21845, 43690, 87381, 174762};
 
 struct alignas(kPageSize) LineitemPageQ14 {
   static constexpr std::uint64_t kMaxNumTuples =
       kLineitemPageQ14MaxNumTuples[kPageSizePower - 12];
   std::uint32_t num_tuples;
   std::array<Integer, kMaxNumTuples> l_partkey;
-  std::array<Numeric<12, 2>, kMaxNumTuples> l_quantity;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_extendedprice;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_discount;
-  std::array<Numeric<12, 2>, kMaxNumTuples> l_tax;
-  std::array<Char, kMaxNumTuples> l_returnflag;
-  std::array<Char, kMaxNumTuples> l_linestatus;
   std::array<Date, kMaxNumTuples> l_shipdate;
 };
 

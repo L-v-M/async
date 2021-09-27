@@ -30,9 +30,6 @@ template <>
 const char *InsertLine<LineitemPageQ1>(const char *begin, const char *end,
                                        std::uint64_t index,
                                        LineitemPageQ1 &page) {
-  // auto iter = FindPatternSlow<'|'>(begin, end) + 1;
-  // auto parsed_partkey = storage::Integer::FromString(iter, '|');
-  // page.l_partkey[index] = parsed_partkey.value;
   auto iter = FindNthPatternFast<'|'>(begin, end, 4) + 1;
   auto parsed_quantity = storage::Numeric<12, 2>::FromString(iter, '|');
   page.l_quantity[index] = parsed_quantity.value;
@@ -61,23 +58,13 @@ const char *InsertLine<LineitemPageQ14>(const char *begin, const char *end,
   auto iter = FindPatternSlow<'|'>(begin, end) + 1;
   auto parsed_partkey = storage::Integer::FromString(iter, '|');
   page.l_partkey[index] = parsed_partkey.value;
-  iter = FindNthPatternFast<'|'>(parsed_partkey.end_it + 1, end, 2) + 1;
-  auto parsed_quantity = storage::Numeric<12, 2>::FromString(iter, '|');
-  page.l_quantity[index] = parsed_quantity.value;
-  auto parsed_extendedprice =
-      storage::Numeric<12, 2>::FromString(parsed_quantity.end_it + 1, '|');
+  iter = FindNthPatternFast<'|'>(parsed_partkey.end_it + 1, end, 3) + 1;
+  auto parsed_extendedprice = storage::Numeric<12, 2>::FromString(iter, '|');
   page.l_extendedprice[index] = parsed_extendedprice.value;
   auto parsed_discount =
       storage::Numeric<12, 2>::FromString(parsed_extendedprice.end_it + 1, '|');
   page.l_discount[index] = parsed_discount.value;
-  auto parsed_tax =
-      storage::Numeric<12, 2>::FromString(parsed_discount.end_it + 1, '|');
-  page.l_tax[index] = parsed_tax.value;
-  iter = parsed_tax.end_it + 1;
-  page.l_returnflag[index] = *iter;
-  iter += 2;
-  page.l_linestatus[index] = *iter;
-  iter += 2;
+  iter = FindNthPatternFast<'|'>(parsed_discount.end_it + 1, end, 3) + 1;
   page.l_shipdate[index] = storage::Date::FromString(iter, '|').value;
   return FindPatternFast<'\n'>(iter, end);
 }

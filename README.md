@@ -1,10 +1,10 @@
 # Asynchronous I/O for Query Processing
 
-Micro-Benchmarks to evaluate the benefits of asynchronous I/O for query processing using C++-Coroutines and `io_uring`.
+Micro-Benchmarks to examine the benefits of asynchronous I/O for query processing using C++-Coroutines and `io_uring`.
 
 ## Build
 
-We depend on [liburing](https://github.com/axboe/liburing).
+We depend on [liburing](https://github.com/axboe/liburing):
 
 ```
 git clone https://github.com/axboe/liburing.git

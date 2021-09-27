@@ -14,6 +14,7 @@
 #include <mutex>
 #include <numeric>
 #include <span>
+#include <sstream>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -31,26 +32,48 @@
 namespace {
 using namespace storage;
 
-constexpr unsigned kFetchIncrement = 8u;
+class InMemoryLineitemData {
+ public:
+  explicit InMemoryLineitemData(std::uint64_t capacity)
+      : l_partkey(capacity),
+        l_extendedprice(capacity),
+        l_discount(capacity),
+        l_shipdate(capacity),
+        size_(0) {}
+
+  std::vector<Integer> l_partkey;
+  std::vector<Numeric<12, 2>> l_extendedprice;
+  std::vector<Numeric<12, 2>> l_discount;
+  std::vector<Date> l_shipdate;
+
+  std::uint64_t IncreaseSize(std::uint64_t increment) noexcept {
+    return std::atomic_ref<std::uint64_t>{size_}.fetch_add(increment);
+  }
+
+  std::uint64_t GetSize() const noexcept { return size_; }
+
+ private:
+  std::uint64_t size_;
+};
 
 class LineitemHashTable {
  public:
   explicit LineitemHashTable(unsigned thread_count)
       : thread_local_entries_(thread_count) {}
 
-  void InsertLocalEntries(const LineitemPage *begin, const LineitemPage *end,
+  void InsertLocalEntries(const InMemoryLineitemData &data,
+                          std::uint64_t begin_tuple_index,
+                          std::uint64_t end_tuple_index,
                           unsigned thread_index) {
     auto &entries = thread_local_entries_[thread_index];
     auto lower_date_boundary = Date::FromString("1995-09-01|", '|').value;
     auto upper_date_boundary = Date::FromString("1995-09-30|", '|').value;
 
-    for (auto iter = begin; iter != end; ++iter) {
-      for (std::uint32_t i = 0, num_tuples = iter->num_tuples; i != num_tuples;
-           ++i) {
-        if (lower_date_boundary <= iter->l_shipdate[i] &&
-            iter->l_shipdate[i] <= upper_date_boundary) {
-          entries.emplace_back(iter->l_partkey[i]);
-        }
+    for (auto tuple_index = begin_tuple_index; tuple_index != end_tuple_index;
+         ++tuple_index) {
+      if (lower_date_boundary <= data.l_shipdate[tuple_index] &&
+          data.l_shipdate[tuple_index] <= upper_date_boundary) {
+        entries.emplace_back(data.l_partkey[tuple_index]);
       }
     }
   }
@@ -62,7 +85,6 @@ class LineitemHashTable {
     }
     hash_table_.resize(std::bit_ceil(total_size));
     hash_table_mask_ = hash_table_.size() - 1;
-    std::cout << "Lineitem hash table contains " << total_size << " entries\n";
   }
 
   void MergeLocalEntries(unsigned thread_index) noexcept {
@@ -164,7 +186,6 @@ class PartHashTable {
     }
     hash_table_.resize(std::bit_ceil(total_size));
     hash_table_mask_ = hash_table_.size() - 1;
-    std::cout << "Part hash table contains " << total_size << " entries\n\n";
   }
 
   void MergeLocalEntries(unsigned thread_index) noexcept {
@@ -283,7 +304,7 @@ class PartHashTable {
   std::uint64_t num_cached_references_;
 };
 
-PartHashTable BuildHashTableForPart(std::span<LineitemPage> lineitem_pages,
+PartHashTable BuildHashTableForPart(const InMemoryLineitemData &lineitem_data,
                                     const char *path_to_part) {
   unsigned thread_count = std::thread::hardware_concurrency();
 
@@ -294,9 +315,9 @@ PartHashTable BuildHashTableForPart(std::span<LineitemPage> lineitem_pages,
   // later.
   LineitemHashTable lineitem_hash_table{thread_count};
   {
-    auto total_num_pages = lineitem_pages.size();
-    auto num_pages_per_thread =
-        (total_num_pages + thread_count - 1) / thread_count;
+    auto total_num_tuples = lineitem_data.GetSize();
+    auto num_tuples_per_thread =
+        (total_num_tuples + thread_count - 1) / thread_count;
     std::vector<std::thread> threads;
     threads.reserve(thread_count);
 
@@ -305,14 +326,14 @@ PartHashTable BuildHashTableForPart(std::span<LineitemPage> lineitem_pages,
 
     for (unsigned thread_index = 0; thread_index != thread_count;
          ++thread_index) {
-      threads.emplace_back([thread_index, total_num_pages, num_pages_per_thread,
-                            lineitem_pages, &flag, &latch,
-                            &lineitem_hash_table]() {
+      threads.emplace_back([thread_index, total_num_tuples,
+                            num_tuples_per_thread, &lineitem_data, &flag,
+                            &latch, &lineitem_hash_table]() {
         auto begin =
-            std::min(thread_index * num_pages_per_thread, total_num_pages);
-        auto end = std::min(begin + num_pages_per_thread, total_num_pages);
-        lineitem_hash_table.InsertLocalEntries(
-            &lineitem_pages[begin], &lineitem_pages[end], thread_index);
+            std::min(thread_index * num_tuples_per_thread, total_num_tuples);
+        auto end = std::min(begin + num_tuples_per_thread, total_num_tuples);
+        lineitem_hash_table.InsertLocalEntries(lineitem_data, begin, end,
+                                               thread_index);
         latch.arrive_and_wait();
         std::call_once(flag, [&lineitem_hash_table]() {
           lineitem_hash_table.ResizeHashTable();
@@ -375,11 +396,11 @@ PartHashTable BuildHashTableForPart(std::span<LineitemPage> lineitem_pages,
 class QueryRunner {
  public:
   QueryRunner(const PartHashTable &part_hash_table, File &part_data_file,
-              std::span<LineitemPage> lineitem_pages, unsigned thread_count,
+              const InMemoryLineitemData &lineitem_data, unsigned thread_count,
               std::uint32_t num_ring_entries = 0)
       : part_hash_table_(part_hash_table),
         part_data_file_(part_data_file),
-        lineitem_pages_(lineitem_pages),
+        lineitem_data_(lineitem_data),
         thread_count_(thread_count),
         thread_local_sums_(thread_count),
         lower_date_boundary(Date::FromString("1995-09-01|", '|').value),
@@ -393,53 +414,71 @@ class QueryRunner {
     }
   }
 
-  void StartProcessing() {
-    std::atomic<std::uint64_t> current_lineitem_page_offset{0ull};
+  void StartProcessing(std::uint64_t num_tuples_per_coroutine = 0) {
+    std::atomic<std::uint64_t> current_lineitem_tuple_offset{0ull};
     std::vector<std::thread> threads;
     threads.reserve(thread_count_);
 
     for (unsigned thread_index = 0; thread_index != thread_count_;
          ++thread_index) {
-      threads.emplace_back(
-          [is_synchronous = IsSynchronous(),
-           num_ring_entries = num_ring_entries_, &current_lineitem_page_offset,
-           total_num_pages_lineitem = lineitem_pages_.size(),
-           lineitem_pages = lineitem_pages_, this, thread_index,
-           &ring = thread_local_rings_[thread_index]] {
-            std::vector<cppcoro::task<void>> tasks;
-            std::vector<PartPage> part_pages_buffer(
-                is_synchronous ? 1 : num_ring_entries);
+      threads.emplace_back([is_synchronous = IsSynchronous(),
+                            num_coroutines = num_ring_entries_,
+                            &current_lineitem_tuple_offset,
+                            total_num_tuples_lineitem =
+                                lineitem_data_.GetSize(),
+                            this, thread_index,
+                            &ring = thread_local_rings_[thread_index],
+                            num_tuples_per_coroutine] {
+        std::vector<cppcoro::task<void>> tasks;
+        std::vector<PartPage> part_pages_buffer(
+            is_synchronous ? 1 : num_coroutines);
 
-            while (true) {
-              auto fetch_increment =
-                  is_synchronous ? kFetchIncrement : num_ring_entries;
-              auto begin =
-                  current_lineitem_page_offset.fetch_add(fetch_increment);
-              if (begin >= total_num_pages_lineitem) {
-                return;
-              }
-              auto end =
-                  std::min(begin + fetch_increment, total_num_pages_lineitem);
+        std::uint64_t fetch_increment =
+            is_synchronous ? 100'000ull
+                           : std::max(num_coroutines * num_tuples_per_coroutine,
+                                      100'000ul);
+        while (true) {
+          std::uint64_t begin =
+              current_lineitem_tuple_offset.fetch_add(fetch_increment);
+          if (begin >= total_num_tuples_lineitem) {
+            return;
+          }
+          auto end =
+              std::min(begin + fetch_increment, total_num_tuples_lineitem);
 
-              if (is_synchronous) {
-                for (; begin != end; ++begin) {
-                  ProcessLineitemPage(lineitem_pages[begin],
-                                      part_pages_buffer.front(), thread_index);
-                }
-              } else {
-                const std::uint64_t num_concurrent_tasks = end - begin;
-                Countdown countdown(num_concurrent_tasks);
-                tasks.resize(num_concurrent_tasks + 1);
-                for (std::uint32_t i = 0; begin != end; ++i, ++begin) {
-                  tasks[i] = AsyncProcessLineitemPage(
-                      lineitem_pages[begin], part_pages_buffer[i], thread_index,
-                      ring, countdown);
-                }
-                tasks[num_concurrent_tasks] = DrainRing(ring, countdown);
+          if (is_synchronous) {
+            ProcessLineitems(begin, end, part_pages_buffer.front(),
+                             thread_index);
+          } else {
+            Countdown countdown(0);
+            auto local_begin = begin;
+            auto local_end = local_begin + num_tuples_per_coroutine;
+            for (; local_end <= end; local_begin = local_end,
+                                     local_end += num_tuples_per_coroutine) {
+              tasks.emplace_back(AsyncProcessLineitems(
+                  local_begin, local_end, part_pages_buffer[tasks.size()],
+                  thread_index, ring, countdown));
+
+              if (tasks.size() == num_coroutines) {
+                countdown.Set(num_coroutines);
+                tasks.emplace_back(DrainRing(ring, countdown));
                 cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
               }
             }
-          });
+            if (tasks.empty()) {
+              ProcessLineitems(local_begin, end, part_pages_buffer.front(),
+                               thread_index);
+            } else {
+              tasks.emplace_back(AsyncProcessLineitems(
+                  local_begin, end, part_pages_buffer[tasks.size()],
+                  thread_index, ring, countdown));
+              countdown.Set(tasks.size());
+              tasks.emplace_back(DrainRing(ring, countdown));
+              cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
+            }
+          }
+        }
+      });
     }
 
     for (auto &t : threads) {
@@ -459,21 +498,22 @@ class QueryRunner {
     auto result = Numeric<12, 4>{1'000'000ll} * (first_sum / second_sum);
 
     if (should_print_result) {
-      std::cout << "promo_revenue\n" << result << "\n";
+      std::cerr << "promo_revenue\n" << result << "\n";
     }
   }
 
  private:
-  void ProcessLineitemPage(const LineitemPage &lineitem_page, PartPage &buffer,
-                           unsigned thread_index) {
+  void ProcessLineitems(std::uint64_t begin_tuple_offset,
+                        std::uint64_t end_tuple_offset, PartPage &buffer,
+                        unsigned thread_index) {
     Numeric<12, 4> first_sum;
     Numeric<12, 4> second_sum;
-    for (std::uint32_t i = 0, num_tuples = lineitem_page.num_tuples;
-         i != num_tuples; ++i) {
-      if (lower_date_boundary <= lineitem_page.l_shipdate[i] &&
-          lineitem_page.l_shipdate[i] <= upper_date_boundary) {
-        auto lookup_result =
-            part_hash_table_.LookupPartkey(lineitem_page.l_partkey[i]);
+    for (auto tuple_offset = begin_tuple_offset;
+         tuple_offset != end_tuple_offset; ++tuple_offset) {
+      if (lower_date_boundary <= lineitem_data_.l_shipdate[tuple_offset] &&
+          lineitem_data_.l_shipdate[tuple_offset] <= upper_date_boundary) {
+        auto lookup_result = part_hash_table_.LookupPartkey(
+            lineitem_data_.l_partkey[tuple_offset]);
 
         const PartPage *part_page;
         if (lookup_result.swip.IsPageIndex()) {
@@ -484,8 +524,9 @@ class QueryRunner {
           part_page = lookup_result.swip.GetPointer<const PartPage>();
         }
 
-        auto sum = lineitem_page.l_extendedprice[i] *
-                   (Numeric<12, 2>{100ll} - lineitem_page.l_discount[i]);
+        auto sum =
+            lineitem_data_.l_extendedprice[tuple_offset] *
+            (Numeric<12, 2>{100ll} - lineitem_data_.l_discount[tuple_offset]);
         std::string_view p_type(
             part_page->p_type[lookup_result.tuple_offset].Begin(),
             part_page->p_type[lookup_result.tuple_offset].Size());
@@ -499,17 +540,20 @@ class QueryRunner {
     thread_local_sums_[thread_index].second += second_sum;
   }
 
-  cppcoro::task<void> AsyncProcessLineitemPage(
-      const LineitemPage &lineitem_page, PartPage &buffer,
-      unsigned thread_index, IOUring &ring, Countdown &countdown) {
+  cppcoro::task<void> AsyncProcessLineitems(std::uint64_t begin_tuple_offset,
+                                            std::uint64_t end_tuple_offset,
+                                            PartPage &buffer,
+                                            unsigned thread_index,
+                                            IOUring &ring,
+                                            Countdown &countdown) {
     Numeric<12, 4> first_sum;
     Numeric<12, 4> second_sum;
-    for (std::uint32_t i = 0, num_tuples = lineitem_page.num_tuples;
-         i != num_tuples; ++i) {
-      if (lower_date_boundary <= lineitem_page.l_shipdate[i] &&
-          lineitem_page.l_shipdate[i] <= upper_date_boundary) {
-        auto lookup_result =
-            part_hash_table_.LookupPartkey(lineitem_page.l_partkey[i]);
+    for (auto tuple_offset = begin_tuple_offset;
+         tuple_offset != end_tuple_offset; ++tuple_offset) {
+      if (lower_date_boundary <= lineitem_data_.l_shipdate[tuple_offset] &&
+          lineitem_data_.l_shipdate[tuple_offset] <= upper_date_boundary) {
+        auto lookup_result = part_hash_table_.LookupPartkey(
+            lineitem_data_.l_partkey[tuple_offset]);
 
         const PartPage *part_page;
         if (lookup_result.swip.IsPageIndex()) {
@@ -521,8 +565,9 @@ class QueryRunner {
           part_page = lookup_result.swip.GetPointer<const PartPage>();
         }
 
-        auto sum = lineitem_page.l_extendedprice[i] *
-                   (Numeric<12, 2>{100ll} - lineitem_page.l_discount[i]);
+        auto sum =
+            lineitem_data_.l_extendedprice[tuple_offset] *
+            (Numeric<12, 2>{100ll} - lineitem_data_.l_discount[tuple_offset]);
         std::string_view p_type(
             part_page->p_type[lookup_result.tuple_offset].Begin(),
             part_page->p_type[lookup_result.tuple_offset].Size());
@@ -543,7 +588,7 @@ class QueryRunner {
 
   const PartHashTable &part_hash_table_;
   File &part_data_file_;
-  std::span<LineitemPage> lineitem_pages_;
+  const InMemoryLineitemData &lineitem_data_;
   const std::uint32_t thread_count_;
   std::vector<NumericsPair> thread_local_sums_;
   const Date lower_date_boundary;
@@ -552,66 +597,118 @@ class QueryRunner {
   const std::uint32_t num_ring_entries_;
 };
 
-std::vector<LineitemPage> LoadLineitemRelation(const char *path_to_lineitem) {
+InMemoryLineitemData LoadLineitemRelation(const char *path_to_lineitem) {
   int fd = open(path_to_lineitem, O_RDONLY);
   std::uint64_t size_in_bytes = lseek(fd, 0, SEEK_END);
-  auto *data = reinterpret_cast<LineitemPage *>(
+  auto *data = reinterpret_cast<LineitemPageQ14 *>(
       mmap(nullptr, size_in_bytes, PROT_READ, MAP_SHARED, fd, 0));
+
   auto total_num_pages = size_in_bytes / kPageSize;
-  std::vector<LineitemPage> lineitem_pages(total_num_pages);
-  std::memcpy(lineitem_pages.data(), data, size_in_bytes);
-  return lineitem_pages;
+  auto max_num_tuples = total_num_pages * LineitemPageQ14::kMaxNumTuples;
+
+  InMemoryLineitemData result(max_num_tuples);
+  auto num_threads = std::thread::hardware_concurrency();
+  auto num_pages_per_thread = (total_num_pages + num_threads - 1) / num_threads;
+
+  std::vector<std::thread> threads;
+  threads.reserve(num_threads);
+  for (unsigned thread_index = 0; thread_index != num_threads; ++thread_index) {
+    threads.emplace_back(
+        [thread_index, num_pages_per_thread, total_num_pages, &result, data]() {
+          auto begin =
+              std::min(thread_index * num_pages_per_thread, total_num_pages);
+          auto end = std::min(begin + num_pages_per_thread, total_num_pages);
+          for (auto page_index = begin; page_index != end; ++page_index) {
+            const LineitemPageQ14 &page = data[page_index];
+            auto num_tuples = page.num_tuples;
+            auto first_tuple_offset = result.IncreaseSize(num_tuples);
+            std::memcpy(&result.l_partkey[first_tuple_offset],
+                        &page.l_partkey.front(),
+                        sizeof(page.l_partkey.front()) * num_tuples);
+            std::memcpy(&result.l_extendedprice[first_tuple_offset],
+                        &page.l_extendedprice.front(),
+                        sizeof(page.l_extendedprice.front()) * num_tuples);
+            std::memcpy(&result.l_discount[first_tuple_offset],
+                        &page.l_discount.front(),
+                        sizeof(page.l_discount.front()) * num_tuples);
+            std::memcpy(&result.l_shipdate[first_tuple_offset],
+                        &page.l_shipdate.front(),
+                        sizeof(page.l_shipdate.front()) * num_tuples);
+          }
+        });
+  }
+  for (auto &thread : threads) {
+    thread.join();
+  }
+  return result;
 }
 }  // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc != 3) {
-    std::cerr << "Usage: " << argv[0] << " lineitem.dat part.dat\n";
+  if (argc != 8) {
+    std::cerr << "Usage: " << argv[0]
+              << " lineitem.dat part.dat num_threads num_entries_per_ring "
+                 "num_tuples_per_coroutine "
+                 "print_result print_header\n";
     return 1;
   }
 
   const char *path_to_lineitem = argv[1];
   const char *path_to_part = argv[2];
+  unsigned num_threads = std::atoi(argv[3]);
+  unsigned num_entries_per_ring = std::atoi(argv[4]);
+  unsigned num_tuples_per_coroutine = std::atoi(argv[5]);
+  bool print_result;
+  std::istringstream(argv[6]) >> std::boolalpha >> print_result;
+  bool print_header;
+  std::istringstream(argv[7]) >> std::boolalpha >> print_header;
 
-  std::vector<LineitemPage> lineitem_pages =
-      LoadLineitemRelation(path_to_lineitem);
+  InMemoryLineitemData lineitem_data = LoadLineitemRelation(path_to_lineitem);
 
-  auto part_hash_table = BuildHashTableForPart(lineitem_pages, path_to_part);
+  auto part_hash_table = BuildHashTableForPart(lineitem_data, path_to_part);
 
   File part_data_file{path_to_part, File::kRead, true};
 
   auto total_num_references = part_hash_table.GetTotalNumPageReferences();
   auto ten_percent = (total_num_references + 9) / 10;
 
+  if (print_header) {
+    std::cout << "kind_of_io,page_size_power,num_threads,num_cached_references,"
+                 "num_total_references,"
+                 "num_entries_per_ring,num_tuples_per_coroutine,time\n";
+  }
+
   for (int i = 0; i != 11; ++i) {
-    std::cout << "\nCached "
-              << part_hash_table.GetNumAlreadyCachedReferences() * 100 /
-                     total_num_references
-              << "%\n";
     {
       QueryRunner synchronousRunner{part_hash_table, part_data_file,
-                                    lineitem_pages, 8};
+                                    lineitem_data, num_threads};
       auto start = std::chrono::high_resolution_clock::now();
       synchronousRunner.StartProcessing();
-      synchronousRunner.DoPostProcessing(true);
+      synchronousRunner.DoPostProcessing(print_result);
       auto end = std::chrono::high_resolution_clock::now();
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "Synchronous, " << milliseconds << " ms\n";
+      std::cout << "synchronous," << kPageSizePower << "," << num_threads << ","
+                << part_hash_table.GetNumAlreadyCachedReferences() << ","
+                << total_num_references << ",0,0," << milliseconds << "\n";
     }
 
     {
       QueryRunner asynchronousRunner{part_hash_table, part_data_file,
-                                     lineitem_pages, 8, 4};
+                                     lineitem_data, num_threads,
+                                     num_entries_per_ring};
       auto start = std::chrono::high_resolution_clock::now();
-      asynchronousRunner.StartProcessing();
-      asynchronousRunner.DoPostProcessing(true);
+      asynchronousRunner.StartProcessing(num_tuples_per_coroutine);
+      asynchronousRunner.DoPostProcessing(print_result);
       auto end = std::chrono::high_resolution_clock::now();
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
-      std::cout << "Asynchronous, " << milliseconds << " ms\n";
+      std::cout << "asynchronous," << kPageSizePower << "," << num_threads
+                << "," << part_hash_table.GetNumAlreadyCachedReferences() << ","
+                << total_num_references << "," << num_entries_per_ring << ","
+                << num_tuples_per_coroutine << "," << milliseconds << "\n";
     }
 
     part_hash_table.CacheAtLeastNumReferences(part_data_file,

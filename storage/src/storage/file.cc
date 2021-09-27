@@ -70,7 +70,7 @@ void File::ReadBlock(std::byte *data, std::uint64_t offset,
 cppcoro::task<void> File::AsyncReadBlock(IOUring &ring, std::byte *data,
                                          std::uint64_t offset,
                                          std::uint64_t size) const {
-  std::uint64_t total_bytes_read = 0;
+  std::uint64_t total_bytes_read = 0ull;
   while (total_bytes_read < size) {
     ssize_t bytes_read = co_await IOUringAwaiter(
         ring, data + total_bytes_read, size - total_bytes_read,

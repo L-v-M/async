@@ -35,7 +35,7 @@ class Date {
 template <unsigned kLen, unsigned kPrecision>
 class Numeric {
  public:
-  Numeric() noexcept : raw_(0){};
+  Numeric() noexcept : raw_(0) {}
 
   explicit Numeric(std::int64_t raw) noexcept : raw_(raw) {}
 
