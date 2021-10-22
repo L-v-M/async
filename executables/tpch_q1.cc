@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <cstdint>
@@ -25,6 +26,7 @@ namespace {
 using namespace storage;
 
 bool do_work = true;
+std::uint64_t num_tuples_per_morsel = 1'000;
 
 class Cache {
  public:
@@ -162,9 +164,11 @@ class QueryRunner {
   }
 
   static cppcoro::task<void> AsyncProcessPages(
-      LineitemPageQ1 &page, std::span<const Swip> swips, HashTable &hash_table,
+      LineitemPageQ1 &page, std::vector<Swip> swips, HashTable &hash_table,
       ValidHashTableIndexes &valid_hash_table_indexes, Date high_date,
       const File &data_file, IOUring &ring, Countdown &countdown) {
+    std::partition(swips.begin(), swips.end(),
+                   [](Swip swip) { return swip.IsPageIndex(); });
     for (auto swip : swips) {
       LineitemPageQ1 *data;
 
@@ -203,9 +207,11 @@ class QueryRunner {
             std::vector<LineitemPageQ1> pages(
                 is_synchronous ? 1 : num_ring_entries);
 
-            // process ceil(100'000 / kMaxNumTuples) pages per morsel
-            constexpr std::uint64_t kSyncFetchIncrement =
-                (100'000 + LineitemPageQ1::kMaxNumTuples - 1) /
+            // process ceil(num_tuples_per_morsel / kMaxNumTuples) pages per
+            // morsel
+            // => each morsel contains circa num_tuples_per_morsel tuples
+            const std::uint64_t kSyncFetchIncrement =
+                (num_tuples_per_morsel + LineitemPageQ1::kMaxNumTuples - 1) /
                 LineitemPageQ1::kMaxNumTuples;
 
             std::uint64_t fetch_increment;
@@ -213,9 +219,8 @@ class QueryRunner {
             if (is_synchronous) {
               fetch_increment = kSyncFetchIncrement;
             } else {
-              fetch_increment = ((kSyncFetchIncrement + num_ring_entries - 1) /
-                                 num_ring_entries) *
-                                num_ring_entries;
+              // process num_ring_entries morsels together
+              fetch_increment = kSyncFetchIncrement * num_ring_entries;
             }
 
             while (true) {
@@ -231,19 +236,20 @@ class QueryRunner {
                              hash_table, valid_hash_table_indexes, high_date,
                              data_file);
               } else {
+                Countdown countdown(num_ring_entries);
+                std::vector<cppcoro::task<void>> tasks;
+                tasks.reserve(num_ring_entries + 1);
+
                 auto num_pages_per_task =
                     (size + num_ring_entries - 1) / num_ring_entries;
 
-                std::vector<cppcoro::task<void>> tasks;
-                Countdown countdown(num_ring_entries);
                 for (std::uint32_t i = 0; i != num_ring_entries; ++i) {
                   auto local_begin =
                       std::min(begin + i * num_pages_per_task, end);
                   auto local_end =
                       std::min(local_begin + num_pages_per_task, end);
                   tasks.emplace_back(AsyncProcessPages(
-                      pages[i],
-                      swips.subspan(local_begin, local_end - local_begin),
+                      pages[i], {&swips[local_begin], &swips[local_end]},
                       hash_table, valid_hash_table_indexes, high_date,
                       data_file, ring, countdown));
                 }
@@ -261,6 +267,8 @@ class QueryRunner {
 
   void DoPostProcessing(bool should_print_result) {
     if (do_work) {
+      // post-processing happens in a single thread. That's okay, because there
+      // are only four groups
       auto &result_hash_table = thread_local_hash_tables_.front();
       auto &result_valid_hash_table_indexes =
           thread_local_valid_hash_table_indexes_.front();
@@ -337,9 +345,10 @@ std::vector<Swip> GetSwips(std::uint64_t size_of_data_file) {
 }  // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc != 8) {
+  if (argc != 9) {
     std::cerr << "Usage: " << argv[0]
-              << " lineitem.dat num_threads num_entries_per_ring do_work "
+              << " lineitem.dat num_threads num_entries_per_ring "
+                 "num_tuples_per_morsel do_work "
                  "do_random_io print_result print_header\n";
     return 1;
   }
@@ -347,13 +356,14 @@ int main(int argc, char *argv[]) {
   std::string path_to_lineitem{argv[1]};
   unsigned num_threads = std::atoi(argv[2]);
   unsigned num_entries_per_ring = std::atoi(argv[3]);
-  std::istringstream(argv[4]) >> std::boolalpha >> do_work;
+  num_tuples_per_morsel = std::atoi(argv[4]);
+  std::istringstream(argv[5]) >> std::boolalpha >> do_work;
   bool do_random_io;
-  std::istringstream(argv[5]) >> std::boolalpha >> do_random_io;
+  std::istringstream(argv[6]) >> std::boolalpha >> do_random_io;
   bool print_result;
-  std::istringstream(argv[6]) >> std::boolalpha >> print_result;
+  std::istringstream(argv[7]) >> std::boolalpha >> print_result;
   bool print_header;
-  std::istringstream(argv[7]) >> std::boolalpha >> print_header;
+  std::istringstream(argv[8]) >> std::boolalpha >> print_header;
 
   const File file{path_to_lineitem.c_str(), File::kRead, true};
   auto file_size = file.ReadSize();
@@ -379,10 +389,11 @@ int main(int argc, char *argv[]) {
 
   if (print_header) {
     std::cout << "kind_of_io,page_size_power,num_threads,num_cached_pages,num_"
-                 "total_pages,num_entries_"
-                 "per_ring,do_work,do_random_io,time,file_size,throughput\n";
+                 "total_pages,num_entries_per_ring,num_tuples_per_morsel,do_"
+                 "work,do_random_io,time,file_size,throughput\n";
   }
 
+  // Start with 0% cached, then 10%, then 20%, ...
   for (int i = 0; i != 11; ++i) {
     if (i > 0) {
       auto offset = std::min((i - 1) * partition_size, swip_indexes.size());
@@ -402,9 +413,9 @@ int main(int argc, char *argv[]) {
               .count();
       std::cout << "synchronous," << kPageSizePower << "," << num_threads << ","
                 << std::min(i * partition_size, swip_indexes.size()) << ","
-                << swip_indexes.size() << ",0," << std::boolalpha << do_work
-                << "," << do_random_io << "," << milliseconds << ","
-                << file_size << ","
+                << swip_indexes.size() << ",0," << num_tuples_per_morsel << ","
+                << std::boolalpha << do_work << "," << do_random_io << ","
+                << milliseconds << "," << file_size << ","
                 << (file_size / 1000000000.0) / (milliseconds / 1000.0) << "\n";
     }
 
@@ -421,8 +432,9 @@ int main(int argc, char *argv[]) {
       std::cout << "asynchronous," << kPageSizePower << "," << num_threads
                 << "," << std::min(i * partition_size, swip_indexes.size())
                 << "," << swip_indexes.size() << "," << num_entries_per_ring
-                << "," << std::boolalpha << do_work << "," << do_random_io
-                << "," << milliseconds << "," << file_size << ","
+                << "," << num_tuples_per_morsel << "," << std::boolalpha
+                << do_work << "," << do_random_io << "," << milliseconds << ","
+                << file_size << ","
                 << (file_size / 1000000000.0) / (milliseconds / 1000.0) << "\n";
     }
   }
