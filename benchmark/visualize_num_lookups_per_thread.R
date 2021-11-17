@@ -43,4 +43,5 @@ benchmark_results %>%
       "Async. (32)",
       "Async. (64)"
     )
-  )
+  ) +
+  theme(legend.position = "bottom")
