@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(asynchronousIO)
+project(async)
 
 set(CMAKE_CXX_STANDARD 20)
 add_compile_options(-Wall -Wextra -Werror -march=native -fcoroutines)
@@ -24,7 +24,9 @@ endif()
 add_compile_definitions(ASYNCHRONOUS_IO_PAGE_SIZE_POWER=${ASYNCHRONOUS_IO_PAGE_SIZE_POWER})
 message("ASYNCHRONOUS_IO_PAGE_SIZE_POWER = ${ASYNCHRONOUS_IO_PAGE_SIZE_POWER}")
 
-add_subdirectory(bench)
+find_package(Threads REQUIRED)
+
+add_subdirectory(bandwidth_and_latency)
 add_subdirectory(cppcoro)
-add_subdirectory(executables)
+add_subdirectory(queries)
 add_subdirectory(storage)

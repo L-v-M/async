@@ -1,8 +1,9 @@
-# Asynchronous I/O for Query Processing
+# What are you waiting for?
+## Use coroutines for asynchronous I/O to hide I/O latencies and maximize the read bandwidth!
 
-Micro-Benchmarks to examine the benefits of asynchronous I/O for query processing using C++-Coroutines and `io_uring`.
+This repository contains micro-benchmarks to examine the benefits of asynchronous I/O for query processing using C++-Coroutines and `io_uring`.
 
-## Build
+### Build
 
 We depend on [liburing](https://github.com/axboe/liburing):
 
@@ -10,7 +11,7 @@ We depend on [liburing](https://github.com/axboe/liburing):
 git clone https://github.com/axboe/liburing.git
 cd liburing
 ./configure
-make all
+make
 ```
 
 Now, you can either make `liburing` available system-wide:
@@ -39,7 +40,7 @@ cmake -G "Ninja" -DCMAKE_C_COMPILER=$(which gcc) -DCMAKE_CXX_COMPILER=$(which g+
 ninja
 ```
 
-## Load Data
+### Load Data
 
 Before you can load the data into our custom format, you need to generate it. Note, that you can specify the scale factor after the `-s` (default: 1). Scale factor of 1 is 1 GB of data.
 
@@ -50,17 +51,19 @@ make
 ./dbgen -s 1
 ```
 
-To actually load the data, execute the following commands. Be prepared to be amazed how fast loading is:
+Here is the help message of the `load_data` executable:
+
+```
+./build/executables/load_data --help
+Usage: ./build/executables/load_data lineitemQ1|lineitemQ14|part (lineitem.tbl lineitemQ1.dat)|(lineitem.tbl lineitemQ14.dat)|(part.tbl part.dat)
+```
+
+To actually load the data, execute the following commands:
 
 ```
 ./build/executables/load_data lineitemQ1 /raid0/data/tpch/sf100/lineitem.tbl /raid0/merzljak/data/sf100/lineitemQ1.dat
 ./build/executables/load_data lineitemQ14 /nvmeSpace/merzljak/sf1/lineitem.tbl /nvmeSpace/merzljak/sf1/lineitemQ14.dat
 ./build/executables/load_data part /nvmeSpace/merzljak/sf1/part.tbl /nvmeSpace/merzljak/sf1/part.dat
-```
-
-```
-./build/executables/load_data --help
-Usage: ./build/executables/load_data lineitemQ1|lineitemQ14|part (lineitem.tbl lineitemQ1.dat)|(lineitem.tbl lineitemQ14.dat)|(part.tbl part.dat)
 ```
 
 ## Query 1

@@ -19,7 +19,7 @@ constexpr size_t kNumCacheLines = kNumCacheLines128GiB;
 static_assert(std::has_single_bit(kNumCacheLines),
               "kNumCacheLines should be a power of 2");
 
-// Returns the total bandwidth
+// Returns the bandwidth in GB/s
 double DoReads(std::span<CacheLine> cache_lines, size_t num_threads,
                size_t max_num_iterations_per_thread, bool do_random_io) {
   std::chrono::steady_clock::time_point start_time_point;
@@ -43,6 +43,7 @@ double DoReads(std::span<CacheLine> cache_lines, size_t num_threads,
                           thread_idx, max_num_iterations_per_thread, &finished,
                           do_random_io, num_threads]() {
       if (do_random_io) {
+        // Give each thread and lehmer state a unique state
         lehmer64_state_t lehmer_state1;
         lehmer64_seed(&lehmer_state1, 7 * thread_idx);
         lehmer64_state_t lehmer_state2;

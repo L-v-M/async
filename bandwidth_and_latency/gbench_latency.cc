@@ -3,12 +3,10 @@
 #include <numeric>
 #include <vector>
 
-#include "aesdragontamer.h"
 #include "benchmark/benchmark.h"
 #include "dram.h"
 #include "lehmer64.h"
 #include "ssd.h"
-#include "wyhash.h"
 
 using namespace dram;
 using namespace ssd;
@@ -17,7 +15,7 @@ using namespace ssd;
 // count=512`
 const char *kFileName = "/raid0/merzljak/io/file.dat";
 
-// Write output to /dev/null to prevent the compiler from optimizations
+// Write output to /dev/null to prevent certain compiler optimizations
 std::ofstream null{"/dev/null"};
 
 static void BM_DRAMRandReadLatency(benchmark::State &state) {
@@ -50,11 +48,10 @@ BENCHMARK(BM_DRAMRandReadLatency);
 
 static void SSDBench(benchmark::State &state, ssize_t page_size,
                      bool do_random_io) {
-  File file{kFileName, File::kRead};
+  File file{kFileName};
   size_t num_pages = file.file_size / page_size;
   std::vector<Entry> entries =
       InitializeEntries(num_pages, page_size, do_random_io);
-  ConnectEntries(entries);
 
   void *buffer = std::aligned_alloc(page_size, page_size);
 
@@ -63,6 +60,7 @@ static void SSDBench(benchmark::State &state, ssize_t page_size,
     Expect(pread(file.fd, buffer, page_size, current->offset) == page_size);
     current = current->next;
   }
+
   std::free(buffer);
 }
 
@@ -107,43 +105,6 @@ static void BM_SSDRandReadLatency512KiB(benchmark::State &state) {
   SSDBench(state, page_size, do_random_io);
 }
 BENCHMARK(BM_SSDRandReadLatency512KiB);
-
-static void BM_AESDragontamer(benchmark::State &state) {
-  constexpr uint64_t kPowerOfTwo = 1ull << 24;
-  aesdragontamer_state aes_state;
-  aesdragontamer_seed(&aes_state, 42);
-  uint64_t sum = 0;
-  for (auto _ : state) {
-    sum += (aesdragontamer(&aes_state) % kPowerOfTwo);
-  }
-  null << sum;
-}
-BENCHMARK(BM_AESDragontamer);
-
-static void BM_Wyhash(benchmark::State &state) {
-  constexpr uint64_t kPowerOfTwo = 1ull << 24;
-  uint64_t wyhash_state = 42;
-  uint64_t sum = 0;
-  for (auto _ : state) {
-    sum += (wyhash64_stateless(&wyhash_state) % kPowerOfTwo);
-  }
-  null << sum;
-}
-BENCHMARK(BM_Wyhash);
-
-static void BM_StdRandom(benchmark::State &state) {
-  constexpr uint64_t kPowerOfTwo = 1ull << 24;
-  std::random_device rd;   // obtain a random number from hardware
-  std::mt19937 gen(rd());  // seed the generator
-  std::uniform_int_distribution<> distr(0,
-                                        kPowerOfTwo - 1);  // define the range
-  uint64_t sum = 0;
-  for (auto _ : state) {
-    sum += distr(gen);
-  }
-  null << sum;
-}
-BENCHMARK(BM_StdRandom);
 
 static void BM_Lehmer(benchmark::State &state) {
   constexpr uint64_t kPowerOfTwo = 1ull << 24;

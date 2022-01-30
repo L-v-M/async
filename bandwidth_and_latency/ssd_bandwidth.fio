@@ -1,6 +1,6 @@
 [global]
 kb_base=1000                            # Inputs comply with IEC 80000-13 and the International System of Units (SI)
-runtime=60s                             # Tell fio to terminate processing after the specified period of time
+runtime=90s                             # Tell fio to terminate processing after the specified period of time
 time_based                              # If set, fio will run for the duration of the runtime specified even if the file(s) are completely read or written
 directory=/raid0/merzljak/fio/
 filename=test.dat                       # We want to share files between jobs

@@ -4,7 +4,8 @@ set(STORAGE_SOURCES
 )
 
 add_library(storage ${STORAGE_SOURCES})
-
 target_include_directories(storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-
 target_link_libraries(storage PUBLIC uring cppcoro)
+
+add_executable(load_data src/storage/load_data.cc)
+target_link_libraries(load_data Threads::Threads storage)
