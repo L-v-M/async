@@ -11,13 +11,13 @@ namespace storage {
 
 static_assert(kPageSizePower >= 12 && kPageSizePower <= 22);
 
-constexpr std::array<std::uint64_t, 11> kLineitemPageQ1MaxNumTuples = {
+constexpr std::array<uint64_t, 11> kLineitemPageQ1MaxNumTuples = {
     107, 215, 430, 862, 1724, 3449, 6898, 13796, 27593, 55188, 110376};
 
 struct alignas(kPageSize) LineitemPageQ1 {
-  static constexpr std::uint64_t kMaxNumTuples =
+  static constexpr uint64_t kMaxNumTuples =
       kLineitemPageQ1MaxNumTuples[kPageSizePower - 12];
-  std::uint32_t num_tuples;
+  uint32_t num_tuples;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_quantity;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_extendedprice;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_discount;
@@ -29,13 +29,13 @@ struct alignas(kPageSize) LineitemPageQ1 {
 
 static_assert(sizeof(LineitemPageQ1) == kPageSize);
 
-constexpr std::array<std::uint64_t, 11> kLineitemPageQ14MaxNumTuples = {
+constexpr std::array<uint64_t, 11> kLineitemPageQ14MaxNumTuples = {
     170, 341, 682, 1365, 2730, 5461, 10922, 21845, 43690, 87381, 174762};
 
 struct alignas(kPageSize) LineitemPageQ14 {
-  static constexpr std::uint64_t kMaxNumTuples =
+  static constexpr uint64_t kMaxNumTuples =
       kLineitemPageQ14MaxNumTuples[kPageSizePower - 12];
-  std::uint32_t num_tuples;
+  uint32_t num_tuples;
   std::array<Integer, kMaxNumTuples> l_partkey;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_extendedprice;
   std::array<Numeric<12, 2>, kMaxNumTuples> l_discount;
@@ -44,13 +44,13 @@ struct alignas(kPageSize) LineitemPageQ14 {
 
 static_assert(sizeof(LineitemPageQ14) == kPageSize);
 
-constexpr std::array<std::uint64_t, 11> kPartPageMaxNumTuples = {
+constexpr std::array<uint64_t, 11> kPartPageMaxNumTuples = {
     24, 48, 96, 192, 385, 770, 1541, 3084, 6168, 12336, 24672};
 
 struct alignas(kPageSize) PartPage {
-  static constexpr std::uint64_t kMaxNumTuples =
+  static constexpr uint64_t kMaxNumTuples =
       kPartPageMaxNumTuples[kPageSizePower - 12];
-  std::uint32_t num_tuples;
+  uint32_t num_tuples;
   std::array<Integer, kMaxNumTuples> p_partkey;
   std::array<Varchar<55>, kMaxNumTuples> p_name;
   std::array<Varchar<25>, kMaxNumTuples> p_mfgr;

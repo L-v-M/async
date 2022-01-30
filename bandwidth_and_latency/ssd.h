@@ -37,13 +37,13 @@ struct File {
 
 struct FileOffsetEntry {
   off_t offset;
-  FileOffsetEntry *next;
 };
 
 inline std::vector<FileOffsetEntry> InitializeEntries(size_t num_pages,
                                                       size_t page_size,
                                                       bool do_random_io) {
   std::vector<FileOffsetEntry> entries(num_pages);
+
   for (size_t i = 0; i != num_pages; ++i) {
     entries[i].offset = i * page_size;
   }
@@ -56,10 +56,6 @@ inline std::vector<FileOffsetEntry> InitializeEntries(size_t num_pages,
     std::shuffle(entries.begin(), entries.end(), g);
   }
 
-  for (size_t i = 0, end = entries.size() - 1; i != end; ++i) {
-    entries[i].next = &entries[i + 1];
-  }
-  entries.back().next = &entries.front();
   return entries;
 }
 

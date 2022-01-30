@@ -1,6 +1,8 @@
+#include <bit>
 #include <cstdlib>
 #include <fstream>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 #include "benchmark/benchmark.h"
@@ -19,12 +21,12 @@ const char *kFileName = "/raid0/merzljak/io/file.dat";
 std::ofstream null{"/dev/null"};
 
 static void BM_DRAMRandReadLatency(benchmark::State &state) {
-  size_t num_cache_lines = kNumCacheLines32GiB;
+  constexpr size_t kNumCacheLines = kNumCacheLines128GiB;
 
-  std::vector<CacheLine> data(num_cache_lines);
+  std::vector<CacheLine> data(kNumCacheLines);
 
-  // Make sure that the access pattern is random
-  std::vector<size_t> indexes(num_cache_lines);
+  // Generate random sequence of indexes
+  std::vector<size_t> indexes(kNumCacheLines);
   std::iota(indexes.begin(), indexes.end(), 0ull);
   // Shuffle indexes
   std::random_device rd;
@@ -33,11 +35,12 @@ static void BM_DRAMRandReadLatency(benchmark::State &state) {
   std::shuffle(indexes.begin(), indexes.end(), g);
 
   // Initialize data
-  for (size_t i = 0, end = num_cache_lines - 1; i != end; ++i) {
+  for (size_t i = 0, end = kNumCacheLines - 1; i != end; ++i) {
     data[indexes[i]].next = &data[indexes[i + 1]];
   }
   data[indexes.back()].next = &data[indexes.front()];
 
+  // Perform one (dependent) random read after another
   CacheLine *current = &data.front();
   for (auto _ : state) {
     current = current->next;
@@ -46,19 +49,27 @@ static void BM_DRAMRandReadLatency(benchmark::State &state) {
 }
 BENCHMARK(BM_DRAMRandReadLatency);
 
+static void Expect(bool predicate, const char *what = "Expect failed") {
+  if (!predicate) {
+    throw std::runtime_error{what};
+  }
+}
+
 static void SSDBench(benchmark::State &state, ssize_t page_size,
                      bool do_random_io) {
   File file{kFileName};
   size_t num_pages = file.file_size / page_size;
-  std::vector<Entry> entries =
-      InitializeEntries(num_pages, page_size, do_random_io);
+  auto entries = InitializeEntries(num_pages, page_size, do_random_io);
 
+  // The buffer must be aligned since we perform direct I/O
   void *buffer = std::aligned_alloc(page_size, page_size);
 
-  Entry *current = &entries.front();
+  size_t i = 0;
+
   for (auto _ : state) {
-    Expect(pread(file.fd, buffer, page_size, current->offset) == page_size);
-    current = current->next;
+    Expect(pread(file.fd, buffer, page_size, entries[i % num_pages].offset) ==
+           page_size);
+    ++i;
   }
 
   std::free(buffer);

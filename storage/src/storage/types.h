@@ -19,7 +19,7 @@ class Date {
  public:
   Date() noexcept = default;
 
-  explicit Date(std::uint32_t raw) noexcept : raw_(raw) {}
+  explicit Date(uint32_t raw) noexcept : raw_(raw) {}
 
   static ParseResult<Date> FromString(const char* iter,
                                       char delimiter) noexcept;
@@ -29,7 +29,7 @@ class Date {
   friend std::ostream& operator<<(std::ostream& out, const Date& value);
 
  private:
-  std::uint32_t raw_{0};
+  uint32_t raw_{0};
 };
 
 template <unsigned kLen, unsigned kPrecision>
@@ -37,7 +37,7 @@ class Numeric {
  public:
   Numeric() noexcept : raw_(0) {}
 
-  explicit Numeric(std::int64_t raw) noexcept : raw_(raw) {}
+  explicit Numeric(int64_t raw) noexcept : raw_(raw) {}
 
   static ParseResult<Numeric> FromString(const char* iter,
                                          char delimiter) noexcept {
@@ -50,9 +50,9 @@ class Numeric {
       ++iter;
     }
 
-    std::int64_t result = 0;
+    int64_t result = 0;
     bool fraction = false;
-    std::uint32_t digits_seen_fraction = 0;
+    uint32_t digits_seen_fraction = 0;
     for (; *iter != delimiter; ++iter) {
       char c = *iter;
       if (c == '.') {
@@ -67,7 +67,7 @@ class Numeric {
 
     static_assert(kPrecision <= 2,
                   "Higher precision not supported for parsing");
-    constexpr std::int64_t shifts[] = {100ll, 10ll, 1ll};
+    constexpr int64_t shifts[] = {100ll, 10ll, 1ll};
     result *= shifts[digits_seen_fraction];
 
     if (negated) {
@@ -94,7 +94,7 @@ class Numeric {
     return r;
   }
 
-  Numeric operator/(std::uint32_t n) const noexcept {
+  Numeric operator/(uint32_t n) const noexcept {
     Numeric r;
     r.raw_ = raw_ / n;
     return r;
@@ -120,26 +120,26 @@ class Numeric {
     return r;
   }
 
-  std::int64_t GetRaw() const noexcept { return raw_; }
+  int64_t GetRaw() const noexcept { return raw_; }
 
  private:
   template <unsigned l, unsigned p>
   friend class Numeric;
 
-  std::int64_t raw_;
+  int64_t raw_;
 };
 
 class Integer {
  public:
   Integer() noexcept : value_(0) {}
 
-  explicit Integer(std::int32_t value) noexcept : value_(value) {}
+  explicit Integer(int32_t value) noexcept : value_(value) {}
 
   static ParseResult<Integer> FromString(const char* iter,
                                          char delimiter) noexcept;
 
-  std::uint64_t hash() const {
-    std::uint64_t r = 88172645463325252ull ^ value_;
+  uint64_t hash() const {
+    uint64_t r = 88172645463325252ull ^ value_;
     r ^= (r << 13);
     r ^= (r >> 7);
     return (r ^ (r << 17));
@@ -152,7 +152,7 @@ class Integer {
   bool operator<(Integer other) const noexcept { return value_ < other.value_; }
 
  private:
-  std::int32_t value_;
+  int32_t value_;
 };
 
 template <unsigned kSize>
@@ -160,17 +160,17 @@ struct LengthSwitch {};
 
 template <>
 struct LengthSwitch<1> {
-  using Type = std::uint8_t;
+  using Type = uint8_t;
 };
 
 template <>
 struct LengthSwitch<2> {
-  using Type = std::uint16_t;
+  using Type = uint16_t;
 };
 
 template <>
 struct LengthSwitch<4> {
-  using Type = std::uint32_t;
+  using Type = uint32_t;
 };
 
 template <unsigned kMaxLen>
@@ -206,7 +206,7 @@ class Varchar {
 template <unsigned kLen, unsigned kPrecision>
 std::ostream& operator<<(std::ostream& out,
                          storage::Numeric<kLen, kPrecision> n) {
-  std::int64_t raw = n.GetRaw();
+  int64_t raw = n.GetRaw();
   if (raw < 0) {
     out << '-';
     raw = -raw;

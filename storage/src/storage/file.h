@@ -9,10 +9,10 @@
 
 namespace storage {
 
-constexpr std::uint64_t kPageSizePower = ASYNCHRONOUS_IO_PAGE_SIZE_POWER;
-constexpr std::uint64_t kPageSize = 1ull << kPageSizePower;
+constexpr size_t kPageSizePower = ASYNCHRONOUS_IO_PAGE_SIZE_POWER;
+constexpr size_t kPageSize = 1ull << kPageSizePower;
 
-using PageIndex = std::uint64_t;
+using PageIndex = size_t;
 
 class File {
  public:
@@ -23,15 +23,14 @@ class File {
 
   ~File();
 
-  std::uint64_t ReadSize() const;
+  size_t ReadSize() const;
 
   void ReadPage(PageIndex page_index, std::byte *data) const {
     auto offset = page_index * kPageSize;
     ReadBlock(data, offset, kPageSize);
   }
 
-  void ReadBlock(std::byte *data, std::uint64_t offset,
-                 std::uint64_t size) const;
+  void ReadBlock(std::byte *data, size_t offset, size_t size) const;
 
   cppcoro::task<void> AsyncReadPage(IOUring &ring, PageIndex page_index,
                                     std::byte *data) const {
@@ -40,14 +39,13 @@ class File {
   }
 
   cppcoro::task<void> AsyncReadBlock(IOUring &ring, std::byte *data,
-                                     std::uint64_t offset,
-                                     std::uint64_t size) const;
+                                     size_t offset, size_t size) const;
 
-  void AppendPages(const std::byte *data, std::uint64_t num_pages) {
+  void AppendPages(const std::byte *data, size_t num_pages) {
     AppendBlock(data, kPageSize * num_pages);
   }
 
-  void AppendBlock(const std::byte *data, std::uint64_t size);
+  void AppendBlock(const std::byte *data, size_t size);
 
  private:
   int fd_;

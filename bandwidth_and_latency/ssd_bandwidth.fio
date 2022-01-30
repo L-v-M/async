@@ -8,7 +8,7 @@ size=256GiB                             # The size of the file
 direct=1                                # Use direct I/O
 blocksize=512KiB                        # The block size used for I/O units
 ioengine=io_uring                       # Fast Linux native asynchronous I/O
-iodepth=1024                            # Number of I/O units to keep in flight against the file.
+iodepth=64                              # Number of I/O units to keep in flight against the file.
 thread                                  # fio will create jobs by using POSIX Threads’ function pthread_create(3) to create threads 
 group_reporting                         # To see the final report per-group instead of per-job
 

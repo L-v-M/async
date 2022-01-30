@@ -20,8 +20,8 @@ namespace storage {
 File::File(const char *filename, Mode mode, bool use_direct_io_for_reading) {
   switch (mode) {
     case kRead: {
-      fd_ =
-          open(filename, O_RDONLY | (use_direct_io_for_reading ? O_DIRECT : 0));
+      fd_ = open(filename, O_RDONLY | O_NOATIME |
+                               (use_direct_io_for_reading ? O_DIRECT : 0));
       break;
     }
     case kWrite: {
@@ -40,7 +40,7 @@ File::~File() {
   }
 }
 
-std::uint64_t File::ReadSize() const {
+size_t File::ReadSize() const {
   struct stat fileStat;
   if (fstat(fd_, &fileStat) < 0) {
     ThrowErrno();
@@ -48,9 +48,8 @@ std::uint64_t File::ReadSize() const {
   return fileStat.st_size;
 }
 
-void File::ReadBlock(std::byte *data, std::uint64_t offset,
-                     std::uint64_t size) const {
-  std::uint64_t total_bytes_read = 0ull;
+void File::ReadBlock(std::byte *data, size_t offset, size_t size) const {
+  size_t total_bytes_read = 0ull;
   while (total_bytes_read < size) {
     ssize_t bytes_read =
         pread(fd_, data + total_bytes_read, size - total_bytes_read,
@@ -68,9 +67,8 @@ void File::ReadBlock(std::byte *data, std::uint64_t offset,
 }
 
 cppcoro::task<void> File::AsyncReadBlock(IOUring &ring, std::byte *data,
-                                         std::uint64_t offset,
-                                         std::uint64_t size) const {
-  std::uint64_t total_bytes_read = 0ull;
+                                         size_t offset, size_t size) const {
+  size_t total_bytes_read = 0ull;
   while (total_bytes_read < size) {
     ssize_t bytes_read = co_await IOUringAwaiter(
         ring, data + total_bytes_read, size - total_bytes_read,
@@ -87,11 +85,13 @@ cppcoro::task<void> File::AsyncReadBlock(IOUring &ring, std::byte *data,
   }
 }
 
-void File::AppendBlock(const std::byte *data, std::uint64_t size) {
+void File::AppendBlock(const std::byte *data, size_t size) {
   ssize_t bytes_written = write(fd_, data, size);
   if (bytes_written == -1) {
     ThrowErrno();
-  } else if (static_cast<std::uint64_t>(bytes_written) != size) {
+  } else if (static_cast<size_t>(bytes_written) != size) {
+    // Recovering from this situation is difficult because other threads can
+    // write simultaneously
     throw std::runtime_error{"Unable to append full block"};
   }
 }

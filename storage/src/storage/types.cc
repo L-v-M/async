@@ -4,9 +4,9 @@
 
 namespace storage {
 
-static ParseResult<std::uint32_t> ParseNumber(const char* iter,
-                                              char delimiter) noexcept {
-  std::uint32_t number = 0;
+static ParseResult<uint32_t> ParseNumber(const char* iter,
+                                         char delimiter) noexcept {
+  uint32_t number = 0;
   for (; *iter != delimiter; ++iter) {
     number = 10 * number + (*iter - '0');
   }
@@ -14,11 +14,11 @@ static ParseResult<std::uint32_t> ParseNumber(const char* iter,
 }
 
 // Algorithm from the Calendar FAQ
-static std::uint32_t MergeJulianDay(std::uint32_t year, std::uint32_t month,
-                                    std::uint32_t day) noexcept {
-  std::uint32_t a = (14 - month) / 12;
-  std::uint32_t y = year + 4800 - a;
-  std::uint32_t m = month + (12 * a) - 3;
+static uint32_t MergeJulianDay(uint32_t year, uint32_t month,
+                               uint32_t day) noexcept {
+  uint32_t a = (14 - month) / 12;
+  uint32_t y = year + 4800 - a;
+  uint32_t m = month + (12 * a) - 3;
 
   return day + ((153 * m + 2) / 5) + (365 * y) + (y / 4) - (y / 100) +
          (y / 400) - 32045;
@@ -69,7 +69,7 @@ ParseResult<Integer> Integer::FromString(const char* iter,
   }
   auto parsed_number = ParseNumber(iter, delimiter);
   return ParseResult<Integer>{is_negative
-                                  ? Integer{-std::int32_t(parsed_number.value)}
+                                  ? Integer{-int32_t(parsed_number.value)}
                                   : Integer(parsed_number.value),
                               parsed_number.end_it};
 }
