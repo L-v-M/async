@@ -35,7 +35,7 @@ We only support building with GCC 11.1.0 or newer. You can specify the size of a
 ```
 mkdir build
 cd build
-cmake -G "Ninja" -DCMAKE_C_COMPILER=$(which gcc-11) -DCMAKE_CXX_COMPILER=$(which g++-11) -DCMAKE_BUILD_TYPE=Release -DASYNCHRONOUS_IO_PAGE_SIZE_POWER=15 ..
+cmake -G "Ninja" -DCMAKE_C_COMPILER=$(which gcc) -DCMAKE_CXX_COMPILER=$(which g++) -DCMAKE_BUILD_TYPE=Release -DASYNCHRONOUS_IO_PAGE_SIZE_POWER=19 ..
 ninja
 ```
 
@@ -53,7 +53,7 @@ make
 To actually load the data, execute the following commands. Be prepared to be amazed how fast loading is:
 
 ```
-./build/executables/load_data lineitemQ1 /nvmeSpace/merzljak/sf1/lineitem.tbl /nvmeSpace/merzljak/sf1/lineitemQ1.dat
+./build/executables/load_data lineitemQ1 /raid0/data/tpch/sf100/lineitem.tbl /raid0/merzljak/data/sf100/lineitemQ1.dat
 ./build/executables/load_data lineitemQ14 /nvmeSpace/merzljak/sf1/lineitem.tbl /nvmeSpace/merzljak/sf1/lineitemQ14.dat
 ./build/executables/load_data part /nvmeSpace/merzljak/sf1/part.tbl /nvmeSpace/merzljak/sf1/part.dat
 ```
@@ -76,6 +76,8 @@ Usage: build/executables/tpch_q1 lineitem.dat num_threads num_entries_per_ring d
 
 ```
 build/executables/tpch_q1 /nvmeSpace/merzljak/sf1/lineitemQ1.dat 20 8 true false true true
+
+numactl --membind=0 --cpubind=0 /home/merzljak/async/build/Release/executables/tpch_q1 /raid0/merzljak/data/sf100/lineitemQ1.dat 32 32 1000 false false false true
 ```
 
 This will use 20 threads for executing the benchmark. When it uses asynchronous I/O, it will use 8 coroutines per thread. It will actually perform the work of query 1 (instead of only reading the pages and not doing anything with them). And it will output result and header.

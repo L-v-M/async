@@ -123,7 +123,7 @@ static void LoadFile(const char *path_to_data_in,
 
   storage::File output_file{path_to_data_out, storage::File::kWrite};
 
-  auto thread_count = std::thread::hardware_concurrency();
+  auto thread_count = 8u;
   std::vector<std::thread> threads;
   threads.reserve(thread_count);
 
@@ -145,7 +145,8 @@ static void LoadFile(const char *path_to_data_in,
   auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
                           end_time - start_time)
                           .count();
-  std::cout << "Processed " << length / 1'000'000.0 << " MB in " << milliseconds
+  std::cout << "Processed " << length / 1'000'000'000.0 << " GB in "
+            << milliseconds
             << " ms: " << (length / 1'000'000'000.0) / (milliseconds / 1000.0)
             << " GB/s\n";
 
