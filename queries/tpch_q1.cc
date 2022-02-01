@@ -26,7 +26,7 @@ namespace {
 using namespace storage;
 
 bool do_work = true;
-std::uint64_t num_tuples_per_morsel = 1'000;
+uint64_t num_tuples_per_morsel = 1'000;
 
 class Cache {
  public:
@@ -35,19 +35,19 @@ class Cache {
     frames_.reserve(swips.size());
   }
 
-  void Populate(std::span<const std::uint64_t> swip_indexes) {
-    constexpr std::uint64_t kNumConcurrentTasks = 64ull;
+  void Populate(std::span<const uint64_t> swip_indexes) {
+    constexpr uint64_t kNumConcurrentTasks = 64ull;
     IOUring ring(kNumConcurrentTasks);
     Countdown countdown(kNumConcurrentTasks);
 
     std::vector<cppcoro::task<void>> tasks;
     tasks.reserve(kNumConcurrentTasks + 1);
 
-    std::uint64_t partition_size =
+    uint64_t partition_size =
         (swip_indexes.size() + kNumConcurrentTasks - 1) / kNumConcurrentTasks;
 
-    for (std::uint64_t i = 0; i != kNumConcurrentTasks; ++i) {
-      std::uint64_t begin = std::min(i * partition_size, swip_indexes.size());
+    for (uint64_t i = 0; i != kNumConcurrentTasks; ++i) {
+      uint64_t begin = std::min(i * partition_size, swip_indexes.size());
       auto end = std::min(begin + partition_size, swip_indexes.size());
       tasks.emplace_back(
           AsyncLoadPages(ring, begin, end, countdown, swip_indexes));
@@ -57,10 +57,10 @@ class Cache {
   }
 
  private:
-  cppcoro::task<void> AsyncLoadPages(
-      IOUring &ring, std::uint64_t begin, std::uint64_t end,
-      Countdown &countdown, std::span<const std::uint64_t> swip_indexes) {
-    for (std::uint64_t i = begin; i != end; ++i) {
+  cppcoro::task<void> AsyncLoadPages(IOUring &ring, uint64_t begin,
+                                     uint64_t end, Countdown &countdown,
+                                     std::span<const uint64_t> swip_indexes) {
+    for (uint64_t i = begin; i != end; ++i) {
       frames_.emplace_back();
       LineitemPageQ1 &page = frames_.back();
       co_await data_file_.AsyncReadPage(ring,
@@ -82,19 +82,19 @@ struct HashTableEntry {
   Numeric<12, 2> sum_disc;
   Numeric<12, 4> sum_disc_price;
   Numeric<12, 4> sum_charge;
-  std::uint32_t count;
+  uint32_t count;
   Char l_returnflag;
   Char l_linestatus;
 };
 
 using HashTable = std::vector<std::unique_ptr<HashTableEntry>>;
-using ValidHashTableIndexes = std::vector<std::uint32_t>;
+using ValidHashTableIndexes = std::vector<uint32_t>;
 
 // implementation idea for query 1 stolen from the MonetDB/X100 paper
 class QueryRunner {
  public:
-  QueryRunner(std::uint32_t num_threads, std::span<const Swip> swips,
-              const File &data_file, std::uint32_t num_ring_entries = 0)
+  QueryRunner(uint32_t num_threads, std::span<const Swip> swips,
+              const File &data_file, uint32_t num_ring_entries = 0)
       : thread_local_hash_tables_(num_threads),
         thread_local_valid_hash_table_indexes_(num_threads),
         high_date_(Date::FromString("1998-09-02|", '|').value),
@@ -108,7 +108,7 @@ class QueryRunner {
 
     if (num_ring_entries > 0) {
       thread_local_rings_.reserve(num_threads);
-      for (std::uint32_t i = 0; i != num_threads; ++i) {
+      for (uint32_t i = 0; i != num_threads; ++i) {
         thread_local_rings_.emplace_back(num_ring_entries);
       }
     }
@@ -117,10 +117,10 @@ class QueryRunner {
   static void ProcessTuples(const LineitemPageQ1 &page, HashTable &hash_table,
                             ValidHashTableIndexes &valid_hash_table_indexes,
                             Date high_date) {
-    Numeric<12, 2> one{std::int64_t{100}};  // assigns a raw value
-    for (std::uint32_t i = 0; i != page.num_tuples; ++i) {
+    Numeric<12, 2> one{int64_t{100}};  // assigns a raw value
+    for (uint32_t i = 0; i != page.num_tuples; ++i) {
       if (page.l_shipdate[i] <= high_date) {
-        std::uint32_t hash_table_index = page.l_returnflag[i];
+        uint32_t hash_table_index = page.l_returnflag[i];
         hash_table_index = (hash_table_index << 8) + page.l_linestatus[i];
         auto &entry = hash_table[hash_table_index];
         if (!entry) {
@@ -189,11 +189,11 @@ class QueryRunner {
   bool IsSynchronous() const noexcept { return num_ring_entries_ == 0; }
 
   void StartProcessing() {
-    std::atomic<std::uint64_t> current_swip{0ull};
+    std::atomic<uint64_t> current_swip{0ull};
     std::vector<std::thread> threads;
     threads.reserve(num_threads_);
 
-    for (std::uint32_t thread_index = 0; thread_index != num_threads_;
+    for (uint32_t thread_index = 0; thread_index != num_threads_;
          ++thread_index) {
       threads.emplace_back(
           [&hash_table = thread_local_hash_tables_[thread_index],
@@ -210,11 +210,11 @@ class QueryRunner {
             // process ceil(num_tuples_per_morsel / kMaxNumTuples) pages per
             // morsel
             // => each morsel contains circa num_tuples_per_morsel tuples
-            const std::uint64_t kSyncFetchIncrement =
+            const uint64_t kSyncFetchIncrement =
                 (num_tuples_per_morsel + LineitemPageQ1::kMaxNumTuples - 1) /
                 LineitemPageQ1::kMaxNumTuples;
 
-            std::uint64_t fetch_increment;
+            uint64_t fetch_increment;
 
             if (is_synchronous) {
               fetch_increment = kSyncFetchIncrement;
@@ -243,7 +243,7 @@ class QueryRunner {
                 auto num_pages_per_task =
                     (size + num_ring_entries - 1) / num_ring_entries;
 
-                for (std::uint32_t i = 0; i != num_ring_entries; ++i) {
+                for (uint32_t i = 0; i != num_ring_entries; ++i) {
                   auto local_begin =
                       std::min(begin + i * num_pages_per_task, end);
                   auto local_end =
@@ -273,7 +273,7 @@ class QueryRunner {
       auto &result_valid_hash_table_indexes =
           thread_local_valid_hash_table_indexes_.front();
 
-      for (std::uint32_t i = 1; i != num_threads_; ++i) {
+      for (uint32_t i = 1; i != num_threads_; ++i) {
         auto &local_hash_table = thread_local_hash_tables_[i];
         for (auto valid_hash_table_index :
              thread_local_valid_hash_table_indexes_[i]) {
@@ -326,13 +326,13 @@ class QueryRunner {
   std::vector<ValidHashTableIndexes> thread_local_valid_hash_table_indexes_;
   std::vector<IOUring> thread_local_rings_;
   const Date high_date_;
-  const std::uint32_t num_threads_;
+  const uint32_t num_threads_;
   const std::span<const Swip> swips_;
   const File &data_file_;
-  const std::uint32_t num_ring_entries_;
+  const uint32_t num_ring_entries_;
 };
 
-std::vector<Swip> GetSwips(std::uint64_t size_of_data_file) {
+std::vector<Swip> GetSwips(uint64_t size_of_data_file) {
   auto num_pages = size_of_data_file / kPageSize;
   std::vector<Swip> swips;
   swips.reserve(num_pages);
@@ -369,10 +369,11 @@ int main(int argc, char *argv[]) {
   auto file_size = file.ReadSize();
   auto swips = GetSwips(file_size);
 
-  std::vector<std::uint64_t> swip_indexes(swips.size());
+  std::vector<uint64_t> swip_indexes(swips.size());
   {
     std::random_device rd;
     std::mt19937 g(rd());
+    g.seed(42);
 
     if (do_random_io) {
       std::shuffle(swips.begin(), swips.end(), g);
@@ -399,15 +400,15 @@ int main(int argc, char *argv[]) {
       auto offset = std::min((i - 1) * partition_size, swip_indexes.size());
       auto size = std::min(partition_size, swip_indexes.size() - offset);
       cache.Populate(
-          std::span<const std::uint64_t>{swip_indexes}.subspan(offset, size));
+          std::span<const uint64_t>{swip_indexes}.subspan(offset, size));
     }
 
     {
       QueryRunner synchronousRunner{num_threads, swips, file};
-      auto start = std::chrono::high_resolution_clock::now();
+      auto start = std::chrono::steady_clock::now();
       synchronousRunner.StartProcessing();
       synchronousRunner.DoPostProcessing(print_result);
-      auto end = std::chrono::high_resolution_clock::now();
+      auto end = std::chrono::steady_clock::now();
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
@@ -422,10 +423,10 @@ int main(int argc, char *argv[]) {
     {
       QueryRunner asynchronousRunner{num_threads, swips, file,
                                      num_entries_per_ring};
-      auto start = std::chrono::high_resolution_clock::now();
+      auto start = std::chrono::steady_clock::now();
       asynchronousRunner.StartProcessing();
       asynchronousRunner.DoPostProcessing(print_result);
-      auto end = std::chrono::high_resolution_clock::now();
+      auto end = std::chrono::steady_clock::now();
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();

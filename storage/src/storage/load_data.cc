@@ -18,18 +18,18 @@ namespace {
 
 using namespace storage;
 
-constexpr std::uint64_t kWriteSize = 1ull << 22;
+constexpr unsigned kNumThreads = 8u;
+constexpr uint64_t kWriteSize = 1ull << 22;
 static_assert(kWriteSize >= storage::kPageSize);
-constexpr std::uint64_t kWriteNumPages = kWriteSize / storage::kPageSize;
+constexpr uint64_t kWriteNumPages = kWriteSize / storage::kPageSize;
 
 template <typename Page>
 static const char *InsertLine(const char *begin, const char *end,
-                              std::uint64_t index, Page &page);
+                              uint64_t index, Page &page);
 
 template <>
 const char *InsertLine<LineitemPageQ1>(const char *begin, const char *end,
-                                       std::uint64_t index,
-                                       LineitemPageQ1 &page) {
+                                       uint64_t index, LineitemPageQ1 &page) {
   auto iter = FindNthPatternFast<'|'>(begin, end, 4) + 1;
   auto parsed_quantity = storage::Numeric<12, 2>::FromString(iter, '|');
   page.l_quantity[index] = parsed_quantity.value;
@@ -53,8 +53,7 @@ const char *InsertLine<LineitemPageQ1>(const char *begin, const char *end,
 
 template <>
 const char *InsertLine<LineitemPageQ14>(const char *begin, const char *end,
-                                        std::uint64_t index,
-                                        LineitemPageQ14 &page) {
+                                        uint64_t index, LineitemPageQ14 &page) {
   auto iter = FindPatternSlow<'|'>(begin, end) + 1;
   auto parsed_partkey = storage::Integer::FromString(iter, '|');
   page.l_partkey[index] = parsed_partkey.value;
@@ -71,7 +70,7 @@ const char *InsertLine<LineitemPageQ14>(const char *begin, const char *end,
 
 template <>
 const char *InsertLine<PartPage>(const char *begin, const char *end,
-                                 std::uint64_t index, PartPage &page) {
+                                 uint64_t index, PartPage &page) {
   auto parsed_partkey = storage::Integer::FromString(begin, '|');
   page.p_partkey[index] = parsed_partkey.value;
   auto type_begin =
@@ -87,9 +86,9 @@ static void LoadChunk(const char *begin, const char *end,
   std::vector<Page> data(kWriteNumPages);
 
   while (begin < end) {
-    for (std::uint64_t i = 0; i != kWriteNumPages; ++i) {
+    for (uint64_t i = 0; i != kWriteNumPages; ++i) {
       auto &page = data[i];
-      std::uint64_t tuple_index = 0;
+      uint64_t tuple_index = 0;
       for (; tuple_index != Page::kMaxNumTuples && begin < end; ++tuple_index) {
         begin = InsertLine<Page>(begin, end, tuple_index, page) + 1;
       }
@@ -123,16 +122,15 @@ static void LoadFile(const char *path_to_data_in,
 
   storage::File output_file{path_to_data_out, storage::File::kWrite};
 
-  auto thread_count = 8u;
   std::vector<std::thread> threads;
-  threads.reserve(thread_count);
+  threads.reserve(kNumThreads);
 
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time = std::chrono::steady_clock::now();
 
-  for (unsigned index = 0; index != thread_count; ++index) {
-    threads.emplace_back([index, thread_count, begin, end, &output_file]() {
-      auto from = FindBeginBoundary<'\n'>(begin, end, thread_count, index);
-      auto to = FindBeginBoundary<'\n'>(begin, end, thread_count, index + 1);
+  for (unsigned index = 0; index != kNumThreads; ++index) {
+    threads.emplace_back([index, begin, end, &output_file]() {
+      auto from = FindBeginBoundary<'\n'>(begin, end, kNumThreads, index);
+      auto to = FindBeginBoundary<'\n'>(begin, end, kNumThreads, index + 1);
       LoadChunk<Page>(from, to, output_file);
     });
   }
@@ -141,24 +139,21 @@ static void LoadFile(const char *path_to_data_in,
     t.join();
   }
 
-  auto end_time = std::chrono::high_resolution_clock::now();
-  auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          end_time - start_time)
-                          .count();
-  std::cout << "Processed " << length / 1'000'000'000.0 << " GB in "
-            << milliseconds
-            << " ms: " << (length / 1'000'000'000.0) / (milliseconds / 1000.0)
-            << " GB/s\n";
+  auto end_time = std::chrono::steady_clock::now();
+  double nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           end_time - start_time)
+                           .count();
+  std::cout << "Processed " << length / nanoseconds << " GB/s\n";
 
   munmap(data, length);
   close(fd);
 }
 
 static void PrintUsage(const char *command) {
-  std::cerr
-      << "Usage: " << command
-      << " lineitemQ1|lineitemQ14|part (lineitem.tbl "
-         "lineitemQ1.dat)|(lineitem.tbl lineitemQ14.dat)|(part.tbl part.dat)\n";
+  std::cerr << "Usage: " << command
+            << " lineitemQ1 lineitem.tbl lineitemQ1.dat |"
+               " lineitemQ14 lineitem.tbl lineitemQ14.dat |"
+               " part part.tbl part.dat\n";
 }
 }  // namespace
 

@@ -54,16 +54,16 @@ make
 Here is the help message of the `load_data` executable:
 
 ```
-./build/executables/load_data --help
-Usage: ./build/executables/load_data lineitemQ1|lineitemQ14|part (lineitem.tbl lineitemQ1.dat)|(lineitem.tbl lineitemQ14.dat)|(part.tbl part.dat)
+./build/Release/storage/load_data --help
+Usage: ./build/Release/storage/load_data lineitemQ1 lineitem.tbl lineitemQ1.dat | lineitemQ14 lineitem.tbl lineitemQ14.dat | part part.tbl part.dat
 ```
 
 To actually load the data, execute the following commands:
 
 ```
-./build/executables/load_data lineitemQ1 /raid0/data/tpch/sf100/lineitem.tbl /raid0/merzljak/data/sf100/lineitemQ1.dat
-./build/executables/load_data lineitemQ14 /nvmeSpace/merzljak/sf1/lineitem.tbl /nvmeSpace/merzljak/sf1/lineitemQ14.dat
-./build/executables/load_data part /nvmeSpace/merzljak/sf1/part.tbl /nvmeSpace/merzljak/sf1/part.dat
+numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data lineitemQ1 /raid0/data/tpch/sf10/lineitem.tbl /raid0/merzljak/data/sf10/lineitemQ1.dat
+numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data lineitemQ14 /raid0/data/tpch/sf10/lineitem.tbl /raid0/merzljak/data/sf10/lineitemQ14.dat
+numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data part /raid0/data/tpch/sf10/part.tbl /raid0/merzljak/data/sf10/part.dat
 ```
 
 ## Query 1
@@ -71,19 +71,15 @@ To actually load the data, execute the following commands:
 ### Usage
 
 ```
-build/executables/tpch_q1 --help
-Usage: build/executables/tpch_q1 lineitem.dat num_threads num_entries_per_ring do_work do_random_io print_result print_header
+./build/Release/queries/tpch_q1 --help
+Usage: ./build/Release/queries/tpch_q1 lineitem.dat num_threads num_entries_per_ring num_tuples_per_morsel do_work do_random_io print_result print_header
 ```
 
 ### Example
 
 ```
-build/executables/tpch_q1 /nvmeSpace/merzljak/sf1/lineitemQ1.dat 20 8 true false true true
-
-numactl --membind=0 --cpubind=0 /home/merzljak/async/build/Release/executables/tpch_q1 /raid0/merzljak/data/sf100/lineitemQ1.dat 32 32 1000 false false false true
+numactl --membind=0 --cpubind=0 ./build/Release/queries/tpch_q1 /raid0/merzljak/data/sf10/lineitemQ1.dat 64 32 1000 true false true true
 ```
-
-This will use 20 threads for executing the benchmark. When it uses asynchronous I/O, it will use 8 coroutines per thread. It will actually perform the work of query 1 (instead of only reading the pages and not doing anything with them). And it will output result and header.
 
 ## Query 14
 
