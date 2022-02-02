@@ -83,4 +83,15 @@ numactl --membind=0 --cpubind=0 ./build/Release/queries/tpch_q1 /raid0/merzljak/
 
 ## Query 14
 
-TODO
+### Usage
+
+```
+./build/Release/queries/tpch_q14 --help
+Usage: ./build/Release/queries/tpch_q14 lineitem.dat part.dat num_threads num_entries_per_ring num_tuples_per_coroutine print_result print_header
+```
+
+### Example
+
+```
+numactl --membind=0 --cpubind=0 ./build/Release/queries/tpch_q14 /raid0/merzljak/data/sf10/lineitemQ14.dat /raid0/merzljak/data/sf10/part.dat 64 32 1000 true true
+```

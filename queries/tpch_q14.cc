@@ -34,7 +34,7 @@ using namespace storage;
 
 class InMemoryLineitemData {
  public:
-  explicit InMemoryLineitemData(std::uint64_t capacity)
+  explicit InMemoryLineitemData(uint64_t capacity)
       : l_partkey(capacity),
         l_extendedprice(capacity),
         l_discount(capacity),
@@ -46,14 +46,14 @@ class InMemoryLineitemData {
   std::vector<Numeric<12, 2>> l_discount;
   std::vector<Date> l_shipdate;
 
-  std::uint64_t IncreaseSize(std::uint64_t increment) noexcept {
-    return std::atomic_ref<std::uint64_t>{size_}.fetch_add(increment);
+  uint64_t IncreaseSize(uint64_t increment) noexcept {
+    return std::atomic_ref<uint64_t>{size_}.fetch_add(increment);
   }
 
-  std::uint64_t GetSize() const noexcept { return size_; }
+  uint64_t GetSize() const noexcept { return size_; }
 
  private:
-  std::uint64_t size_;
+  uint64_t size_;
 };
 
 class LineitemHashTable {
@@ -62,8 +62,7 @@ class LineitemHashTable {
       : thread_local_entries_(thread_count) {}
 
   void InsertLocalEntries(const InMemoryLineitemData &data,
-                          std::uint64_t begin_tuple_index,
-                          std::uint64_t end_tuple_index,
+                          uint64_t begin_tuple_index, uint64_t end_tuple_index,
                           unsigned thread_index) {
     auto &entries = thread_local_entries_[thread_index];
     auto lower_date_boundary = Date::FromString("1995-09-01|", '|').value;
@@ -112,7 +111,7 @@ class LineitemHashTable {
     }
   }
 
-  std::uint32_t LookupCountForPartkey(Integer partkey) const noexcept {
+  uint32_t LookupCountForPartkey(Integer partkey) const noexcept {
     auto bucket_index = partkey.hash() & hash_table_mask_;
     for (Entry *current = hash_table_[bucket_index].next; current != nullptr;
          current = current->next) {
@@ -135,12 +134,12 @@ class LineitemHashTable {
 
     Entry *next;
     const Integer partkey;
-    std::uint32_t count;
+    uint32_t count;
   };
 
   std::vector<std::vector<Entry>> thread_local_entries_;
   std::vector<Entry> hash_table_;
-  std::uint64_t hash_table_mask_;
+  uint64_t hash_table_mask_;
 };
 
 class PartHashTable {
@@ -164,8 +163,8 @@ class PartHashTable {
     auto current_page_index = begin_page_index;
 
     for (auto iter = begin; iter != end; ++iter, ++current_page_index) {
-      std::uint32_t num_references = 0u;
-      for (std::uint32_t i = 0, num_tuples = iter->num_tuples; i != num_tuples;
+      uint32_t num_references = 0u;
+      for (uint32_t i = 0, num_tuples = iter->num_tuples; i != num_tuples;
            ++i) {
         auto partkey = iter->p_partkey[i];
         if (auto count = lineitem_hash_table.LookupCountForPartkey(partkey);
@@ -201,7 +200,7 @@ class PartHashTable {
 
   struct LookupResult {
     Swip swip;
-    std::uint32_t tuple_offset;
+    uint32_t tuple_offset;
   };
 
   LookupResult LookupPartkey(Integer partkey) const {
@@ -215,8 +214,8 @@ class PartHashTable {
     throw "Unable to find partkey";  // this should never happen
   }
 
-  std::uint64_t GetTotalNumPageReferences() const noexcept {
-    std::uint64_t count = 0ull;
+  uint64_t GetTotalNumPageReferences() const noexcept {
+    uint64_t count = 0ull;
     for (const auto &page_reference : page_references_) {
       count += page_reference.num_references;
     }
@@ -224,8 +223,8 @@ class PartHashTable {
   }
 
   void CacheAtLeastNumReferences(File &part_data_file,
-                                 std::uint64_t num_references_to_be_cached) {
-    constexpr std::uint64_t kNumConcurrentTasks = 64ull;
+                                 uint64_t num_references_to_be_cached) {
+    constexpr uint64_t kNumConcurrentTasks = 64ull;
     IOUring ring(kNumConcurrentTasks);
     Countdown countdown(kNumConcurrentTasks);
 
@@ -247,11 +246,10 @@ class PartHashTable {
     auto global_end = num_used_buffer_pages_;
 
     auto num_pages = global_end - global_begin;
-    std::uint64_t partition_size =
+    uint64_t partition_size =
         (num_pages + kNumConcurrentTasks - 1) / kNumConcurrentTasks;
-    for (std::uint64_t i = 0; i != kNumConcurrentTasks; ++i) {
-      std::uint64_t begin =
-          std::min(global_begin + i * partition_size, global_end);
+    for (uint64_t i = 0; i != kNumConcurrentTasks; ++i) {
+      uint64_t begin = std::min(global_begin + i * partition_size, global_end);
       auto end = std::min(begin + partition_size, global_end);
       tasks.emplace_back(
           AsyncLoadPages(ring, begin, end, countdown, part_data_file));
@@ -260,10 +258,10 @@ class PartHashTable {
     cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
   }
 
-  cppcoro::task<void> AsyncLoadPages(IOUring &ring, std::uint64_t begin,
-                                     std::uint64_t end, Countdown &countdown,
+  cppcoro::task<void> AsyncLoadPages(IOUring &ring, uint64_t begin,
+                                     uint64_t end, Countdown &countdown,
                                      File &part_data_file) {
-    for (std::uint64_t i = begin; i != end; ++i) {
+    for (uint64_t i = begin; i != end; ++i) {
       auto *page = reinterpret_cast<std::byte *>(&part_pages_buffer_[i]);
       co_await part_data_file.AsyncReadPage(ring, i, page);
       swips_[i].SetPointer(page);
@@ -271,14 +269,13 @@ class PartHashTable {
     countdown.Decrement();
   }
 
-  std::uint64_t GetNumAlreadyCachedReferences() const noexcept {
+  uint64_t GetNumAlreadyCachedReferences() const noexcept {
     return num_cached_references_;
   }
 
  private:
   struct Entry {
-    Entry(const Swip &swip, Integer partkey,
-          std::uint32_t tuple_offset) noexcept
+    Entry(const Swip &swip, Integer partkey, uint32_t tuple_offset) noexcept
         : next(nullptr),
           swip(swip),
           partkey(partkey),
@@ -287,21 +284,21 @@ class PartHashTable {
     Entry *next;
     const Swip &swip;
     const Integer partkey;
-    std::uint32_t tuple_offset;
+    uint32_t tuple_offset;
   };
 
   struct PageReferences {
-    std::uint32_t num_references;
+    uint32_t num_references;
   };
 
   std::vector<std::vector<Entry>> thread_local_entries_;
   std::vector<Swip> swips_;
   std::vector<Entry *> hash_table_;
   std::vector<PageReferences> page_references_;
-  std::uint64_t hash_table_mask_;
+  uint64_t hash_table_mask_;
   std::vector<PartPage> part_pages_buffer_;
-  std::uint64_t num_used_buffer_pages_;
-  std::uint64_t num_cached_references_;
+  uint64_t num_used_buffer_pages_;
+  uint64_t num_cached_references_;
 };
 
 PartHashTable BuildHashTableForPart(const InMemoryLineitemData &lineitem_data,
@@ -352,7 +349,7 @@ PartHashTable BuildHashTableForPart(const InMemoryLineitemData &lineitem_data,
   // the hash table, we also remember how often each page of the part relation
   // will be accessed for processing query 14.
   int fd = open(path_to_part, O_RDONLY);
-  std::uint64_t size_in_bytes = lseek(fd, 0, SEEK_END);
+  uint64_t size_in_bytes = lseek(fd, 0, SEEK_END);
   auto *data = reinterpret_cast<PartPage *>(
       mmap(nullptr, size_in_bytes, PROT_READ, MAP_SHARED, fd, 0));
   madvise(data, size_in_bytes, MADV_SEQUENTIAL);
@@ -397,7 +394,7 @@ class QueryRunner {
  public:
   QueryRunner(const PartHashTable &part_hash_table, File &part_data_file,
               const InMemoryLineitemData &lineitem_data, unsigned thread_count,
-              std::uint32_t num_ring_entries = 0)
+              uint32_t num_ring_entries = 0)
       : part_hash_table_(part_hash_table),
         part_data_file_(part_data_file),
         lineitem_data_(lineitem_data),
@@ -414,8 +411,8 @@ class QueryRunner {
     }
   }
 
-  void StartProcessing(std::uint64_t num_tuples_per_coroutine = 0) {
-    std::atomic<std::uint64_t> current_lineitem_tuple_offset{0ull};
+  void StartProcessing(uint64_t num_tuples_per_coroutine = 0) {
+    std::atomic<uint64_t> current_lineitem_tuple_offset{0ull};
     std::vector<std::thread> threads;
     threads.reserve(thread_count_);
 
@@ -433,12 +430,12 @@ class QueryRunner {
         std::vector<PartPage> part_pages_buffer(
             is_synchronous ? 1 : num_coroutines);
 
-        std::uint64_t fetch_increment =
+        uint64_t fetch_increment =
             is_synchronous ? 100'000ull
                            : std::max(num_coroutines * num_tuples_per_coroutine,
                                       100'000ul);
         while (true) {
-          std::uint64_t begin =
+          uint64_t begin =
               current_lineitem_tuple_offset.fetch_add(fetch_increment);
           if (begin >= total_num_tuples_lineitem) {
             return;
@@ -503,9 +500,8 @@ class QueryRunner {
   }
 
  private:
-  void ProcessLineitems(std::uint64_t begin_tuple_offset,
-                        std::uint64_t end_tuple_offset, PartPage &buffer,
-                        unsigned thread_index) {
+  void ProcessLineitems(uint64_t begin_tuple_offset, uint64_t end_tuple_offset,
+                        PartPage &buffer, unsigned thread_index) {
     Numeric<12, 4> first_sum;
     Numeric<12, 4> second_sum;
     for (auto tuple_offset = begin_tuple_offset;
@@ -540,12 +536,9 @@ class QueryRunner {
     thread_local_sums_[thread_index].second += second_sum;
   }
 
-  cppcoro::task<void> AsyncProcessLineitems(std::uint64_t begin_tuple_offset,
-                                            std::uint64_t end_tuple_offset,
-                                            PartPage &buffer,
-                                            unsigned thread_index,
-                                            IOUring &ring,
-                                            Countdown &countdown) {
+  cppcoro::task<void> AsyncProcessLineitems(
+      uint64_t begin_tuple_offset, uint64_t end_tuple_offset, PartPage &buffer,
+      unsigned thread_index, IOUring &ring, Countdown &countdown) {
     Numeric<12, 4> first_sum;
     Numeric<12, 4> second_sum;
     for (auto tuple_offset = begin_tuple_offset;
@@ -589,17 +582,17 @@ class QueryRunner {
   const PartHashTable &part_hash_table_;
   File &part_data_file_;
   const InMemoryLineitemData &lineitem_data_;
-  const std::uint32_t thread_count_;
+  const uint32_t thread_count_;
   std::vector<NumericsPair> thread_local_sums_;
   const Date lower_date_boundary;
   const Date upper_date_boundary;
   std::vector<IOUring> thread_local_rings_;
-  const std::uint32_t num_ring_entries_;
+  const uint32_t num_ring_entries_;
 };
 
 InMemoryLineitemData LoadLineitemRelation(const char *path_to_lineitem) {
   int fd = open(path_to_lineitem, O_RDONLY);
-  std::uint64_t size_in_bytes = lseek(fd, 0, SEEK_END);
+  uint64_t size_in_bytes = lseek(fd, 0, SEEK_END);
   auto *data = reinterpret_cast<LineitemPageQ14 *>(
       mmap(nullptr, size_in_bytes, PROT_READ, MAP_SHARED, fd, 0));
 
@@ -682,10 +675,10 @@ int main(int argc, char *argv[]) {
     {
       QueryRunner synchronousRunner{part_hash_table, part_data_file,
                                     lineitem_data, num_threads};
-      auto start = std::chrono::high_resolution_clock::now();
+      auto start = std::chrono::steady_clock::now();
       synchronousRunner.StartProcessing();
       synchronousRunner.DoPostProcessing(print_result);
-      auto end = std::chrono::high_resolution_clock::now();
+      auto end = std::chrono::steady_clock::now();
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
@@ -698,10 +691,10 @@ int main(int argc, char *argv[]) {
       QueryRunner asynchronousRunner{part_hash_table, part_data_file,
                                      lineitem_data, num_threads,
                                      num_entries_per_ring};
-      auto start = std::chrono::high_resolution_clock::now();
+      auto start = std::chrono::steady_clock::now();
       asynchronousRunner.StartProcessing(num_tuples_per_coroutine);
       asynchronousRunner.DoPostProcessing(print_result);
-      auto end = std::chrono::high_resolution_clock::now();
+      auto end = std::chrono::steady_clock::now();
       auto milliseconds =
           std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
               .count();
