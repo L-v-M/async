@@ -46,7 +46,7 @@ Before you can load the data into our custom format, you need to generate it. No
 
 ```
 git clone https://github.com/electrum/tpch-dbgen.git
-cd tpch-dbgen.git
+cd tpch-dbgen
 make
 ./dbgen -s 1
 ```
