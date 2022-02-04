@@ -1,23 +1,23 @@
 [global]
 kb_base=1000                            # Inputs comply with IEC 80000-13 and the International System of Units (SI)
-runtime=90s                             # Tell fio to terminate processing after the specified period of time
+runtime=30s                             # Tell fio to terminate processing after the specified period of time
 time_based                              # If set, fio will run for the duration of the runtime specified even if the file(s) are completely read or written
 directory=/raid0/merzljak/fio/
 filename=test.dat                       # We want to share files between jobs
 size=256GiB                             # The size of the file
 direct=1                                # Use direct I/O
-blocksize=512KiB                        # The block size used for I/O units
+blocksize=256KiB                        # The block size used for I/O units
 ioengine=io_uring                       # Fast Linux native asynchronous I/O
-iodepth=64                              # Number of I/O units to keep in flight against the file.
+iodepth=256                              # Number of I/O units to keep in flight against the file.
 thread                                  # fio will create jobs by using POSIX Threads’ function pthread_create(3) to create threads 
 group_reporting                         # To see the final report per-group instead of per-job
 
 [seq-read]
 readwrite=read                          # Sequential reads
-numjobs=16                              # Create 16 clones of this job
+numjobs=4                              # Create 16 clones of this job
 stonewall
 
 [rand-read]
 readwrite=randread                      # Random reads
-numjobs=16                              # Create 16 clones of this job
+numjobs=4                              # Create 16 clones of this job
 stonewall
