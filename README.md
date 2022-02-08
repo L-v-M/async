@@ -61,9 +61,9 @@ Usage: ./build/Release/storage/load_data lineitemQ1 lineitem.tbl lineitemQ1.dat 
 To actually load the data, execute the following commands:
 
 ```
-numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data lineitemQ1 /raid0/data/tpch/sf10/lineitem.tbl /raid0/merzljak/data/sf10/lineitemQ1.dat
-numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data lineitemQ14 /raid0/data/tpch/sf10/lineitem.tbl /raid0/merzljak/data/sf10/lineitemQ14.dat
-numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data part /raid0/data/tpch/sf10/part.tbl /raid0/merzljak/data/sf10/part.dat
+numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data lineitemQ1 /raid0/data/tpch/sf100/lineitem.tbl /raid0/merzljak/data/sf100/lineitemQ1.dat
+numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data lineitemQ14 /raid0/data/tpch/sf100/lineitem.tbl /raid0/merzljak/data/sf100/lineitemQ14.dat
+numactl --membind=0 --cpubind=0 ./build/Release/storage/load_data part /raid0/data/tpch/sf100/part.tbl /raid0/merzljak/data/sf100/part.dat
 ```
 
 ## Query 1
@@ -78,7 +78,7 @@ Usage: ./build/Release/queries/tpch_q1 lineitem.dat num_threads num_entries_per_
 ### Example
 
 ```
-numactl --membind=0 --cpubind=0 ./build/Release/queries/tpch_q1 /raid0/merzljak/data/sf10/lineitemQ1.dat 64 32 1000 true false true true
+numactl --membind=0 --cpubind=0 ./build/Release/queries/tpch_q1 /raid0/merzljak/data/sf100/lineitemQ1.dat 128 128 1000 true false false true
 ```
 
 ## Query 14

@@ -5,6 +5,7 @@
 #ifndef CPPCORO_TASK_HPP_INCLUDED
 #define CPPCORO_TASK_HPP_INCLUDED
 
+#include <cppcoro/allocator.hpp>
 #include <cppcoro/awaitable_traits.hpp>
 #include <cppcoro/broken_promise.hpp>
 
@@ -27,6 +28,8 @@ namespace cppcoro
 
 	namespace detail
 	{
+		inline thread_local Allocator* allocator{ nullptr };
+
 		class task_promise_base
 		{
 			friend struct final_awaitable;
@@ -47,6 +50,30 @@ namespace cppcoro
 
 		public:
 			task_promise_base() noexcept {}
+
+			static void* operator new(size_t sz)
+			{
+				if (allocator)
+				{
+					return allocator->allocate(sz);
+				}
+				else
+				{
+					return ::operator new(sz);
+				}
+			}
+
+			static void operator delete(void* p, size_t sz)
+			{
+				if (allocator)
+				{
+					allocator->deallocate(p, sz);
+				}
+				else
+				{
+					::operator delete(p, sz);
+				}
+			}
 
 			// template<typename... Args>
 			// static void*

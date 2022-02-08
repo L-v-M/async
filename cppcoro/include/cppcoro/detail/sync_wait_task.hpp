@@ -5,6 +5,7 @@
 #ifndef CPPCORO_DETAIL_SYNC_WAIT_TASK_HPP_INCLUDED
 #define CPPCORO_DETAIL_SYNC_WAIT_TASK_HPP_INCLUDED
 
+#include <cppcoro/allocator.hpp>
 #include <cppcoro/awaitable_traits.hpp>
 #include <cppcoro/detail/lightweight_manual_reset_event.hpp>
 
@@ -17,6 +18,8 @@ namespace cppcoro
 {
 	namespace detail
 	{
+		inline thread_local Allocator* sync_allocator{ nullptr };
+
 		template<typename RESULT>
 		class sync_wait_task;
 
@@ -29,6 +32,30 @@ namespace cppcoro
 			using reference = RESULT&&;
 
 			sync_wait_task_promise() noexcept {}
+
+			static void* operator new(size_t sz)
+			{
+				if (sync_allocator)
+				{
+					return sync_allocator->allocate(sz);
+				}
+				else
+				{
+					return ::operator new(sz);
+				}
+			}
+
+			static void operator delete(void* p, size_t sz)
+			{
+				if (sync_allocator)
+				{
+					sync_allocator->deallocate(p, sz);
+				}
+				else
+				{
+					::operator delete(p, sz);
+				}
+			}
 
 			void start(detail::lightweight_manual_reset_event& event)
 			{
@@ -96,6 +123,30 @@ namespace cppcoro
 
 		public:
 			sync_wait_task_promise() noexcept {}
+
+			static void* operator new(size_t sz)
+			{
+				if (sync_allocator)
+				{
+					return sync_allocator->allocate(sz);
+				}
+				else
+				{
+					return ::operator new(sz);
+				}
+			}
+
+			static void operator delete(void* p, size_t sz)
+			{
+				if (sync_allocator)
+				{
+					sync_allocator->deallocate(p, sz);
+				}
+				else
+				{
+					::operator delete(p, sz);
+				}
+			}
 
 			void start(detail::lightweight_manual_reset_event& event)
 			{

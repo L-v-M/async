@@ -204,8 +204,12 @@ class QueryRunner {
            is_synchronous = IsSynchronous(),
            &ring = thread_local_rings_[thread_index],
            num_ring_entries = num_ring_entries_] {
-            std::vector<LineitemPageQ1> pages(
-                is_synchronous ? 1 : num_ring_entries);
+            if (!is_synchronous) {
+              cppcoro::detail::allocator = new Allocator(num_ring_entries);
+              cppcoro::detail::sync_allocator = new Allocator(1);
+            }
+            std::allocator<LineitemPageQ1> alloc;
+            auto pages = alloc.allocate(is_synchronous ? 1 : num_ring_entries);
 
             // process ceil(num_tuples_per_morsel / kMaxNumTuples) pages per
             // morsel
@@ -232,9 +236,8 @@ class QueryRunner {
               auto size = end - begin;
 
               if (is_synchronous) {
-                ProcessPages(pages.front(), swips.subspan(begin, size),
-                             hash_table, valid_hash_table_indexes, high_date,
-                             data_file);
+                ProcessPages(pages[0], swips.subspan(begin, size), hash_table,
+                             valid_hash_table_indexes, high_date, data_file);
               } else {
                 Countdown countdown(num_ring_entries);
                 std::vector<cppcoro::task<void>> tasks;
@@ -256,6 +259,14 @@ class QueryRunner {
                 tasks.emplace_back(DrainRing(ring, countdown));
                 cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
               }
+            }
+
+            alloc.deallocate(pages, is_synchronous ? 1 : num_ring_entries);
+            if (!is_synchronous) {
+              delete cppcoro::detail::allocator;
+              cppcoro::detail::allocator = nullptr;
+              delete cppcoro::detail::sync_allocator;
+              cppcoro::detail::sync_allocator = nullptr;
             }
           });
     }
