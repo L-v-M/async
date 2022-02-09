@@ -427,8 +427,13 @@ class QueryRunner {
                             &ring = thread_local_rings_[thread_index],
                             num_tuples_per_coroutine] {
         std::vector<cppcoro::task<void>> tasks;
-        std::vector<PartPage> part_pages_buffer(
-            is_synchronous ? 1 : num_coroutines);
+        if (!is_synchronous) {
+          cppcoro::detail::allocator = new Allocator(num_coroutines);
+          cppcoro::detail::sync_allocator = new Allocator(1);
+        }
+        std::allocator<PartPage> alloc;
+        auto part_pages_buffer =
+            alloc.allocate(is_synchronous ? 1 : num_coroutines);
 
         uint64_t fetch_increment =
             is_synchronous ? 100'000ull
@@ -444,8 +449,7 @@ class QueryRunner {
               std::min(begin + fetch_increment, total_num_tuples_lineitem);
 
           if (is_synchronous) {
-            ProcessLineitems(begin, end, part_pages_buffer.front(),
-                             thread_index);
+            ProcessLineitems(begin, end, part_pages_buffer[0], thread_index);
           } else {
             Countdown countdown(0);
             auto local_begin = begin;
@@ -463,7 +467,7 @@ class QueryRunner {
               }
             }
             if (tasks.empty()) {
-              ProcessLineitems(local_begin, end, part_pages_buffer.front(),
+              ProcessLineitems(local_begin, end, part_pages_buffer[0],
                                thread_index);
             } else {
               tasks.emplace_back(AsyncProcessLineitems(
@@ -474,6 +478,14 @@ class QueryRunner {
               cppcoro::sync_wait(cppcoro::when_all_ready(std::move(tasks)));
             }
           }
+        }
+        alloc.deallocate(part_pages_buffer,
+                         is_synchronous ? 1 : num_coroutines);
+        if (!is_synchronous) {
+          delete cppcoro::detail::allocator;
+          cppcoro::detail::allocator = nullptr;
+          delete cppcoro::detail::sync_allocator;
+          cppcoro::detail::sync_allocator = nullptr;
         }
       });
     }
