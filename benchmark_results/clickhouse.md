@@ -23,7 +23,7 @@ numactl --membind=0 --cpubind=0  ../../build/programs/clickhouse server
 ## Run ClickHouse Client
 
 ```sh
-./build/programs/clickhouse client --multiline
+./build/programs/clickhouse client --multiline --multiquery
 ```
 
 ## Load TPC-H Data
@@ -68,6 +68,7 @@ SET max_memory_usage = 0;
 SET format_csv_delimiter = '|';
 INSERT INTO lineitem FROM INFILE '/raid0/data/tpch/sf10/lineitem.tbl' FORMAT CSV;
 INSERT INTO part FROM INFILE '/raid0/data/tpch/sf10/part.tbl' FORMAT CSV;
+SET max_threads = 64;
 ```
 
 ## Queries
