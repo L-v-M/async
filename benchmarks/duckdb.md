@@ -1,14 +1,26 @@
-# Umbra
+# DuckDB
+
+## Build
 
 ```
-git clone https://gitlab.db.in.tum.de/umbra/umbra-students.git
-make -j 128
+git clone https://github.com/duckdb/duckdb.git
+cd duckdb/
+mkdir build
+cd build
+export CC=clang CXX=clang++
+cmake -G "Ninja" -D CMAKE_BUILD_TYPE=Release ..
+ninja
 ```
 
+## Start CLI
+
 ```
-export PARALLEL=64
-numactl --membind=0 --cpubind=0 ./bin/sql
+numactl --membind=0 --cpubind=0 ./duckdb
+PRAGMA threads=64;
+.timer ON
 ```
+
+## Create schema
 
 ```
 create table part (
@@ -103,20 +115,24 @@ create table region (
    r_comment varchar(152) not null,
    primary key (r_regionkey)
 );
-
 ```
 
-```
-copy part from '/raid0/data/tpch/sf10/part.tbl' delimiter '|';
-copy supplier from 'supplier.tbl' delimiter '|';
-copy partsupp from 'partsupp.tbl' delimiter '|';
-copy customer from 'customer.tbl' delimiter '|';
-copy orders from 'orders.tbl' delimiter '|';
-copy lineitem from '/raid0/data/tpch/sf10/lineitem.tbl' delimiter '|';
-copy nation from 'nation.tbl' delimiter '|';
-copy region from 'region.tbl' delimiter '|';
+## Load data
 
 ```
+COPY part from '/raid0/data/tpch/sf30/part.tbl' ( DELIMITER '|' );
+COPY supplier from '/raid0/data/tpch/sf30/supplier.tbl' ( DELIMITER '|' );
+COPY partsupp from '/raid0/data/tpch/sf30/partsupp.tbl' ( DELIMITER '|' );
+COPY customer from '/raid0/data/tpch/sf30/customer.tbl' ( DELIMITER '|' );
+COPY orders from '/raid0/data/tpch/sf30/orders.tbl' ( DELIMITER '|' );
+COPY lineitem from '/raid0/data/tpch/sf30/lineitem.tbl' ( DELIMITER '|' );
+COPY nation from '/raid0/data/tpch/sf30/nation.tbl' ( DELIMITER '|' );
+COPY region from '/raid0/data/tpch/sf30/region.tbl' ( DELIMITER '|' );
+```
+
+## Queries
+
+### Query 1
 
 ```
 select
@@ -142,18 +158,52 @@ order by
         l_linestatus;
 ```
 
+### Query 2
+
 ```
 select
-        100.00 * sum(case
-                when p_type like 'PROMO%'
-                        then l_extendedprice * (1 - l_discount)
-                else 0
-        end) / sum(l_extendedprice * (1 - l_discount)) as promo_revenue
+        s_acctbal,
+        s_name,
+        n_name,
+        p_partkey,
+        p_mfgr,
+        s_address,
+        s_phone,
+        s_comment
 from
-        lineitem,
-        part
+        part,
+        supplier,
+        partsupp,
+        nation,
+        region
 where
-        l_partkey = p_partkey
-        and l_shipdate >= date '1995-09-01'
-        and l_shipdate < date '1995-09-01' + interval '1' month;
+        p_partkey = ps_partkey
+        and s_suppkey = ps_suppkey
+        and p_size = 15
+        and p_type like '%BRASS'
+        and s_nationkey = n_nationkey
+        and n_regionkey = r_regionkey
+        and r_name = 'EUROPE'
+        and ps_supplycost = (
+                select
+                        min(ps_supplycost)
+                from
+                        partsupp,
+                        supplier,
+                        nation,
+                        region
+                where
+                        p_partkey = ps_partkey
+                        and s_suppkey = ps_suppkey
+                        and s_nationkey = n_nationkey
+                        and n_regionkey = r_regionkey
+                        and r_name = 'EUROPE'
+        )
+order by
+        s_acctbal desc,
+        n_name,
+        s_name,
+        p_partkey
+limit
+        100;
 ```

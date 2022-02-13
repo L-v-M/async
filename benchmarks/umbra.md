@@ -1,22 +1,20 @@
-# DuckDB
+# Umbra
 
 ## Build
 
 ```
-git clone https://github.com/duckdb/duckdb.git
-cd duckdb/
-mkdir build
-cd build
-export CC=clang CXX=clang++
-cmake -G "Ninja" -D CMAKE_BUILD_TYPE=Release ..
-ninja
+git clone https://gitlab.db.in.tum.de/umbra/umbra-students.git
+make -j 128
 ```
 
+## Start CLI
+
 ```
-numactl --membind=0 --cpubind=0 ./duckdb
-PRAGMA threads=64;
-.timer ON
+export PARALLEL=64
+numactl --membind=0 --cpubind=0 ./bin/sql
 ```
+
+## Create schema
 
 ```
 create table part (
@@ -28,8 +26,7 @@ create table part (
    p_size integer not null,
    p_container char(10) not null,
    p_retailprice decimal(12,2) not null,
-   p_comment varchar(23) not null,
-   primary key (p_partkey)
+   p_comment varchar(23) not null
 );
 
 create table supplier (
@@ -39,8 +36,7 @@ create table supplier (
    s_nationkey integer not null,
    s_phone char(15) not null,
    s_acctbal decimal(12,2) not null,
-   s_comment varchar(101) not null,
-   primary key (s_suppkey)
+   s_comment varchar(101) not null
 );
 
 create table partsupp (
@@ -48,8 +44,7 @@ create table partsupp (
    ps_suppkey integer not null,
    ps_availqty integer not null,
    ps_supplycost decimal(12,2) not null,
-   ps_comment varchar(199) not null,
-   primary key (ps_partkey,ps_suppkey)
+   ps_comment varchar(199) not null
 );
 
 create table customer (
@@ -60,8 +55,7 @@ create table customer (
    c_phone char(15) not null,
    c_acctbal decimal(12,2) not null,
    c_mktsegment char(10) not null,
-   c_comment varchar(117) not null,
-   primary key (c_custkey)
+   c_comment varchar(117) not null
 );
 
 create table orders (
@@ -73,8 +67,7 @@ create table orders (
    o_orderpriority char(15) not null,
    o_clerk char(15) not null,
    o_shippriority integer not null,
-   o_comment varchar(79) not null,
-   primary key (o_orderkey)
+   o_comment varchar(79) not null
 );
 
 create table lineitem (
@@ -93,30 +86,39 @@ create table lineitem (
    l_receiptdate date not null,
    l_shipinstruct char(25) not null,
    l_shipmode char(10) not null,
-   l_comment varchar(44) not null,
-   primary key (l_orderkey,l_linenumber)
+   l_comment varchar(44) not null
 );
 
 create table nation (
    n_nationkey integer not null,
    n_name char(25) not null,
    n_regionkey integer not null,
-   n_comment varchar(152) not null,
-   primary key (n_nationkey)
+   n_comment varchar(152) not null
 );
 
 create table region (
    r_regionkey integer not null,
    r_name char(25) not null,
-   r_comment varchar(152) not null,
-   primary key (r_regionkey)
+   r_comment varchar(152) not null
 );
 ```
 
+## Load data
+
 ```
-COPY lineitem FROM '/raid0/data/tpch/sf10/lineitem.tbl' ( DELIMITER '|' );
-COPY part FROM '/raid0/data/tpch/sf10/part.tbl' ( DELIMITER '|' );
+copy part from '/raid0/data/tpch/sf30/part.tbl' delimiter '|';
+copy supplier from '/raid0/data/tpch/sf30/supplier.tbl' delimiter '|';
+copy partsupp from '/raid0/data/tpch/sf30/partsupp.tbl' delimiter '|';
+copy customer from '/raid0/data/tpch/sf30/customer.tbl' delimiter '|';
+copy orders from '/raid0/data/tpch/sf30/orders.tbl' delimiter '|';
+copy lineitem from '/raid0/data/tpch/sf30/lineitem.tbl' delimiter '|';
+copy nation from '/raid0/data/tpch/sf30/nation.tbl' delimiter '|';
+copy region from '/raid0/data/tpch/sf30/region.tbl' delimiter '|';
 ```
+
+## Queries
+
+### Query 1
 
 ```
 select
@@ -140,18 +142,54 @@ group by
 order by
         l_returnflag,
         l_linestatus;
+```
 
+### Query 2
+
+```
 select
-        100.00 * sum(case
-                when p_type like 'PROMO%'
-                        then l_extendedprice * (1 - l_discount)
-                else 0
-        end) / sum(l_extendedprice * (1 - l_discount)) as promo_revenue
+        s_acctbal,
+        s_name,
+        n_name,
+        p_partkey,
+        p_mfgr,
+        s_address,
+        s_phone,
+        s_comment
 from
-        lineitem,
-        part
+        part,
+        supplier,
+        partsupp,
+        nation,
+        region
 where
-        l_partkey = p_partkey
-        and l_shipdate >= date '1995-09-01'
-        and l_shipdate < date '1995-09-01' + interval '1' month;
+        p_partkey = ps_partkey
+        and s_suppkey = ps_suppkey
+        and p_size = 15
+        and p_type like '%BRASS'
+        and s_nationkey = n_nationkey
+        and n_regionkey = r_regionkey
+        and r_name = 'EUROPE'
+        and ps_supplycost = (
+                select
+                        min(ps_supplycost)
+                from
+                        partsupp,
+                        supplier,
+                        nation,
+                        region
+                where
+                        p_partkey = ps_partkey
+                        and s_suppkey = ps_suppkey
+                        and s_nationkey = n_nationkey
+                        and n_regionkey = r_regionkey
+                        and r_name = 'EUROPE'
+        )
+order by
+        s_acctbal desc,
+        n_name,
+        s_name,
+        p_partkey
+limit
+        100;
 ```
