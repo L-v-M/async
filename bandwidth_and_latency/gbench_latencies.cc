@@ -1,3 +1,4 @@
+#ifdef BENCH
 #include <bit>
 #include <cstdlib>
 #include <fstream>
@@ -152,3 +153,4 @@ static void BM_Lehmer3(benchmark::State &state) {
 BENCHMARK(BM_Lehmer3);
 
 BENCHMARK_MAIN();
+#endif
